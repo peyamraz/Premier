@@ -25,7 +25,7 @@ function VuMeter({ level, label }: { level: number; label: string }) {
   );
 }
 
-export function Monitor() {
+export function Monitor({ scanning = false }: { scanning?: boolean }) {
   const {
     state,
     dispatch,
@@ -136,6 +136,17 @@ export function Monitor() {
           <>
             <div className="pointer-events-none absolute inset-[5%] z-[5] border border-dashed border-scope/40" />
             <div className="pointer-events-none absolute inset-[12.5%] z-[5] border border-dashed border-amb/40" />
+          </>
+        )}
+
+        {scanning && (
+          <>
+            <div className="pointer-events-none absolute inset-0 z-[6] bg-amb/5" />
+            <div className="scan-sweep pointer-events-none absolute inset-y-0 z-[6] w-16 bg-gradient-to-r from-transparent via-amb/25 to-transparent" />
+            <div className="pointer-events-none absolute left-3 bottom-3 z-[7] flex items-center gap-2 rounded-[3px] bg-black/70 px-2 py-1 font-mono text-[10px] tracking-[0.18em] text-amb">
+              <span className="blink h-1.5 w-1.5 rounded-full bg-amb" />
+              AI ANALİZ EDİYOR
+            </div>
           </>
         )}
 

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { AIBar } from "./editor/AIBar";
 import { ExportModal } from "./editor/ExportModal";
 import { Inspector, MediaBin } from "./editor/Panels";
 import { Monitor } from "./editor/Monitor";
@@ -11,7 +12,7 @@ import { Icon, useScramble } from "./lib/ui";
 /* boş durum — sürükle & bırak sahnesi                                 */
 /* ------------------------------------------------------------------ */
 
-function EmptyState() {
+function EmptyState({ onAIFocus }: { onAIFocus: () => void }) {
   const { addFiles } = useEditor();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const title = useScramble("KURGUYA BAŞLA");
@@ -76,6 +77,13 @@ function EmptyState() {
               e.target.value = "";
             }}
           />
+          <button
+            onClick={onAIFocus}
+            className="group mt-1 flex items-center gap-2 font-mono text-[10.5px] tracking-[0.14em] text-dim transition-colors hover:text-amb"
+          >
+            <Icon name="bolt" className="h-3.5 w-3.5 text-amb/70 transition-transform group-hover:scale-110" />
+            YA DA AI'YA YAZIN: <span className="text-mut">“otomatik kurgula”</span> — Ctrl+J
+          </button>
         </div>
       </div>
     </div>
@@ -86,7 +94,7 @@ function EmptyState() {
 /* üst çubuk + durum çubuğu                                            */
 /* ------------------------------------------------------------------ */
 
-function TopBar({ onExport }: { onExport: () => void }) {
+function TopBar({ onExport, onAI }: { onExport: () => void; onAI: () => void }) {
   const { state, dispatch, totalDur } = useEditor();
 
   return (
@@ -117,6 +125,13 @@ function TopBar({ onExport }: { onExport: () => void }) {
           {state.clips.length} klip • {fmtShort(totalDur)} • 24 fps
         </span>
         <button
+          onClick={onAI}
+          className="hidden h-8 items-center gap-2 rounded-[3px] border border-amb/50 bg-amb/8 px-3 font-mono text-[11px] font-bold tracking-wider text-amb transition-all hover:bg-amb/15 hover:shadow-[0_4px_18px_rgba(255,180,60,.18)] sm:flex"
+          title="AI komut konsolu (Ctrl+J)"
+        >
+          <Icon name="bolt" className="h-3.5 w-3.5" /> AI KONSOL
+        </button>
+        <button
           onClick={onExport}
           disabled={state.clips.length === 0}
           className="flex h-8 items-center gap-2 rounded-[3px] bg-amb px-3.5 font-mono text-[11px] font-bold tracking-wider text-bg0 transition-all hover:bg-amb2 hover:shadow-[0_6px_24px_rgba(255,180,60,.28)] disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:shadow-none"
@@ -128,7 +143,7 @@ function TopBar({ onExport }: { onExport: () => void }) {
   );
 }
 
-function StatusBar() {
+function StatusBar({ scanning }: { scanning: boolean }) {
   const { state, seqPos, playing, totalDur, activeIndex } = useEditor();
   const activeClip = state.clips[activeIndex];
   const activeMedia = activeClip ? state.media.find((m) => m.id === activeClip.mediaId) : undefined;
@@ -138,6 +153,10 @@ function StatusBar() {
       <span className={`flex items-center gap-1.5 ${playing ? "text-amb" : "text-scope"}`}>
         <span className={`h-1.5 w-1.5 rounded-full ${playing ? "pulse-dot bg-amb" : "bg-scope"}`} />
         {playing ? "OYNUYOR" : "HAZIR"}
+      </span>
+      <span className={`flex items-center gap-1.5 ${scanning ? "text-amb" : "text-dim"}`}>
+        <Icon name="bolt" className={`h-3 w-3 ${scanning ? "pulse-dot text-amb" : "text-amb/60"}`} />
+        AI {scanning ? "ÇALIŞIYOR" : "HAZIR"}
       </span>
       <span className="hidden truncate sm:block">
         {activeMedia ? `V1 ▸ ${activeMedia.name}` : "MEDYA BEKLENİYOR"}
@@ -178,7 +197,10 @@ function Shell() {
   const { state, addFiles, togglePlay, stepFrames, splitAtPlayhead, setInAtPlayhead, setOutAtPlayhead, dispatch } = useEditor();
   const [showExport, setShowExport] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [scanning, setScanning] = useState(false);
   const dragCount = useRef(0);
+  const aiInputRef = useRef<HTMLInputElement | null>(null);
+  const aiFileRef = useRef<HTMLInputElement | null>(null);
   const hasContent = state.media.length > 0;
 
   /* global sürükle-bırak */
@@ -242,7 +264,7 @@ function Shell() {
 
   return (
     <div className="relative flex h-screen min-h-[560px] flex-col overflow-hidden bg-bg0">
-      <TopBar onExport={() => setShowExport(true)} />
+      <TopBar onExport={() => setShowExport(true)} onAI={() => aiInputRef.current?.focus()} />
 
       {hasContent ? (
         <>
@@ -251,7 +273,7 @@ function Shell() {
               <MediaBin />
             </aside>
             <main className="order-1 flex min-h-0 flex-1 flex-col lg:order-2">
-              <Monitor />
+              <Monitor scanning={scanning} />
             </main>
             <aside className="order-3 flex min-h-0 flex-col border-t border-line lg:w-72 lg:border-l lg:border-t-0 xl:w-80">
               <Inspector />
@@ -262,10 +284,28 @@ function Shell() {
           </section>
         </>
       ) : (
-        <EmptyState />
+        <EmptyState onAIFocus={() => aiInputRef.current?.focus()} />
       )}
 
-      <StatusBar />
+      <AIBar
+        inputRef={aiInputRef}
+        onExport={() => setShowExport(true)}
+        onImport={() => aiFileRef.current?.click()}
+        onScanning={setScanning}
+      />
+      <input
+        ref={aiFileRef}
+        type="file"
+        accept="video/*,image/*,.mp4,.webm,.mov,.mkv,.png,.jpg,.jpeg,.gif"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          if (e.target.files) void addFiles(e.target.files);
+          e.target.value = "";
+        }}
+      />
+
+      <StatusBar scanning={scanning} />
 
       {dragOver && (
         <div className="pointer-events-none fixed inset-0 z-[120] flex items-center justify-center bg-bg0/80 backdrop-blur-[2px]">
