@@ -121,7 +121,10 @@ export type AnimType =
   | "slideRight"
   | "zoom"
   | "wipe"
-  | "typewriter";
+  | "typewriter"
+  | "pop"
+  | "blurIn"
+  | "glitch";
 
 export interface MotionLayer {
   id: string;
@@ -144,6 +147,7 @@ export interface MotionLayer {
   animOut: AnimType;
   animDur: number; // saniye
   easing: Easing;
+  follow?: "none" | "pan" | "zoom"; // yazı takibi: pan = ekranı tarar, zoom = yavaş yaklaşma
 }
 
 export const EASINGS: Record<Easing, { label: string; fn: (t: number) => number }> = {
@@ -182,6 +186,9 @@ export const ANIMS: Record<AnimType, string> = {
   zoom: "Yaklaş",
   wipe: "Perde",
   typewriter: "Daktilo",
+  pop: "Pop (taşmalı)",
+  blurIn: "Bulanık netleşme",
+  glitch: "Glitch",
 };
 
 export const FONT_FAMILIES: Record<MotionLayer["font"], string> = {
@@ -202,8 +209,17 @@ export interface LayerPose {
   opacity: number; // 0-100
   clip: number; // 0-1 (perde)
   chars: number; // daktilo
+  blur: number; // px
+  jx: number; // glitch jitter px
+  jy: number;
   visible: boolean;
 }
+
+/** Deterministik sözde-rastgele (monitör + render aynı değeri üretir). */
+export const prand = (seed: number): number => {
+  const v = Math.sin(seed * 127.1) * 43758.5453;
+  return v - Math.floor(v);
+};
 
 /** Katmanın t anındaki dönüşüm durumu — monitör ve render aynı matematiği kullanır. */
 export function layerPose(L: MotionLayer, t: number): LayerPose {
@@ -216,6 +232,9 @@ export function layerPose(L: MotionLayer, t: number): LayerPose {
   let opacity = L.opacity;
   let clip = 1;
   let chars = L.text.length;
+  let blur = 0;
+  let jx = 0;
+  let jy = 0;
 
   const applyIn = (p: number, a: AnimType) => {
     const q = 1 - p;
@@ -223,6 +242,22 @@ export function layerPose(L: MotionLayer, t: number): LayerPose {
       case "fade":
         opacity *= p;
         break;
+      case "pop":
+        scale *= 0.2 + 0.8 * p;
+        opacity *= Math.min(1, p * 2);
+        break;
+      case "blurIn":
+        opacity *= Math.min(1, p * 1.4);
+        blur = q * 14;
+        break;
+      case "glitch": {
+        opacity *= Math.min(1, p * 1.8);
+        const f = Math.floor(t * 24);
+        jx = (prand(f) - 0.5) * 16 * q;
+        jy = (prand(f + 7) - 0.5) * 9 * q;
+        if (prand(Math.floor(t * 18)) < 0.22) opacity *= 0.15;
+        break;
+      }
       case "slideUp":
         y += q * 10;
         opacity *= Math.min(1, p * 1.6);
@@ -255,6 +290,9 @@ export function layerPose(L: MotionLayer, t: number): LayerPose {
       case "fade":
       case "typewriter":
       case "zoom":
+      case "pop":
+      case "blurIn":
+      case "glitch":
         opacity *= p;
         break;
       case "slideUp":
@@ -280,7 +318,22 @@ export function layerPose(L: MotionLayer, t: number): LayerPose {
   applyIn(pi, L.animIn);
   applyOut(po, L.animOut);
 
-  return { x, y, scale, rot, opacity, clip, chars, visible };
+  /* yazı takibi — pan: metin ekranı tarar; zoom: yavaş yaklaşma */
+  if (L.follow && L.follow !== "none") {
+    const u = clamp((t - L.start) / Math.max(0.001, L.end - L.start), 0, 1);
+    if (L.follow === "pan") {
+      x = 112 - 124 * u;
+      opacity = Math.max(opacity, 0);
+      scale = 100;
+      clip = 1;
+      jx = 0;
+      jy = 0;
+    } else if (L.follow === "zoom") {
+      scale = 100 + 34 * u;
+    }
+  }
+
+  return { x, y, scale, rot, opacity, clip, chars, blur, jx, jy, visible };
 }
 
 export function makeLayer(

@@ -2,9 +2,21 @@ import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 
 import { Icon } from "../lib/ui";
 import { TYPE_BADGE, TYPE_LABEL } from "./analysis";
 import { MIN_CLIP, clamp, clipDur, cumStart, findClipAt, fmtShort, seqDuration } from "./model";
+import { SFX_META } from "./sfx";
 import { useEditor } from "./state";
 
-type DragMode = "scrub" | "move" | "trimL" | "trimR" | "capL" | "capR" | "layerL" | "layerR";
+type DragMode =
+  | "scrub"
+  | "move"
+  | "trimL"
+  | "trimR"
+  | "capL"
+  | "capR"
+  | "layerL"
+  | "layerR"
+  | "sfxMove"
+  | "sfxL"
+  | "sfxR";
 
 interface DragInfo {
   mode: DragMode;
@@ -100,6 +112,22 @@ export function Timeline() {
       };
       return;
     }
+    const sfxEl = target.closest<HTMLElement>("[data-sfx]");
+    if (sfxEl) {
+      const it = state.sfx.find((x) => x.id === sfxEl.dataset.sfx);
+      if (!it) return;
+      drag.current = {
+        mode: handle ? (handle.dataset.mode as DragMode) : "sfxMove",
+        id: it.id,
+        startX: e.clientX,
+        origIn: 0,
+        origOut: 0,
+        origStart: it.start,
+        origEnd: it.start + it.dur,
+        moved: false,
+      };
+      return;
+    }
     if (clipEl) {
       const id = clipEl.dataset.clip!;
       dispatch({ type: "SELECT_CLIP", id });
@@ -189,6 +217,18 @@ export function Timeline() {
         dispatch({ type: "UPDATE_LAYER", id: d.id, patch: { start: clamp(d.origStart + dx / pps, 0, d.origEnd - MIN_CLIP) } });
       } else {
         dispatch({ type: "UPDATE_LAYER", id: d.id, patch: { end: clamp(d.origEnd + dx / pps, d.origStart + MIN_CLIP, 600) } });
+      }
+      return;
+    }
+    if (d.mode === "sfxMove" || d.mode === "sfxL" || d.mode === "sfxR") {
+      const dur0 = d.origEnd - d.origStart;
+      if (d.mode === "sfxMove") {
+        dispatch({ type: "UPDATE_SFX", id: d.id, patch: { start: Math.max(0, d.origStart + dx / pps) } });
+      } else if (d.mode === "sfxL") {
+        const ns = clamp(d.origStart + dx / pps, 0, d.origEnd - 0.1);
+        dispatch({ type: "UPDATE_SFX", id: d.id, patch: { start: ns, dur: d.origEnd - ns } });
+      } else {
+        dispatch({ type: "UPDATE_SFX", id: d.id, patch: { dur: Math.max(0.1, dur0 + dx / pps) } });
       }
       return;
     }
@@ -520,6 +560,54 @@ export function Timeline() {
                   </div>
                 );
               })}
+            </div>
+          </div>
+
+          {/* SFX izi */}
+          <div className="flex h-10 border-t border-line/60">
+            <div className="sticky left-0 z-10 flex w-11 shrink-0 items-center justify-center border-r border-line bg-panel font-mono text-[10px] font-semibold text-rec">
+              S1
+            </div>
+            <div className="relative flex-1" style={{ width }}>
+              {state.sfx.map((it) => (
+                <div
+                  key={it.id}
+                  data-sfx={it.id}
+                  className="clip group absolute bottom-1.5 top-1.5 cursor-grab overflow-hidden rounded-[3px] border border-rec/50 bg-rec/12 px-1.5 active:cursor-grabbing"
+                  style={{ left: it.start * pps, width: Math.max(20, it.dur * pps) }}
+                  title={`${SFX_META[it.type].label} — ${fmtShort(it.start)} · sürükle: taşı, kenarlar: boyut`}
+                >
+                  <span className="flex items-center gap-1 pt-1">
+                    <Icon name="wave" className="h-2.5 w-2.5 shrink-0 text-rec" />
+                    <span className="truncate font-mono text-[9px] text-[#ffb0aa]">
+                      {SFX_META[it.type].label}
+                    </span>
+                  </span>
+                  <span className="pointer-events-none absolute inset-x-1 bottom-1 flex items-end gap-[2px] opacity-60">
+                    {Array.from({ length: Math.max(3, Math.min(20, Math.floor((it.dur * pps) / 6))) }, (_, k) => (
+                      <span key={k} className="h-[3px] min-w-0 flex-1 rounded-[1px] bg-rec/70" style={{ height: `${4 + ((k * 37) % 7)}px` }} />
+                    ))}
+                  </span>
+                  <span data-mode="sfxL" className="absolute inset-y-0 left-0 w-2 cursor-ew-resize" />
+                  <span data-mode="sfxR" className="absolute inset-y-0 right-0 w-2 cursor-ew-resize" />
+                  <button
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      dispatch({ type: "REMOVE_SFX", id: it.id });
+                    }}
+                    onPointerDown={(ev) => ev.stopPropagation()}
+                    className="absolute right-0.5 top-0.5 hidden h-3.5 w-3.5 items-center justify-center rounded-[2px] bg-bg0/80 text-dim transition-colors hover:text-rec group-hover:flex"
+                    title="Efekti sil"
+                  >
+                    <Icon name="x" className="h-2.5 w-2.5" />
+                  </button>
+                </div>
+              ))}
+              {state.sfx.length === 0 && (
+                <div className="flex h-full items-center px-3 font-mono text-[10px] tracking-[0.14em] text-dim">
+                  ▸ SES EFEKTİ YOK — “otomatik ses efekti” YA DA DENETÇİ KÜTÜPHANESİ
+                </div>
+              )}
             </div>
           </div>
 

@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { Icon } from "../lib/ui";
 import { TYPE_LABEL } from "./analysis";
+import { SFX_META, SFX_TYPES, previewSfx } from "./sfx";
 import {
   ANIMS,
   EASINGS,
@@ -438,6 +439,9 @@ export function Inspector() {
         {/* hareketli grafikler */}
         <MotionGraphics />
 
+        {/* ses efektleri */}
+        <SfxPanel />
+
         {/* kısayollar */}
         <section className="rounded-[4px] border border-line bg-panel p-3">
           <p className={`${sectionTitle} mb-2`}>Kısayollar</p>
@@ -704,6 +708,117 @@ export function MotionGraphics() {
               <EasingCurve easing={sel.easing} />
             </div>
           </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* ================================================================== */
+/* Ses efektleri (S1)                                                  */
+/* ================================================================== */
+
+function SfxPanel() {
+  const { state, dispatch, seqPos, totalDur, toast } = useEditor();
+  const [previewing, setPreviewing] = useState<string | null>(null);
+
+  const addAt = (type: (typeof SFX_TYPES)[number]) => {
+    const start = totalDur > 0 ? Math.min(seqPos, Math.max(0, totalDur - 0.05)) : 0;
+    dispatch({
+      type: "ADD_SFX",
+      item: {
+        id: `${Date.now().toString(36)}-${Math.floor(Math.random() * 46656).toString(36)}`,
+        type,
+        start,
+        dur: SFX_META[type].dur,
+        volume: 0.9,
+      },
+    });
+    previewSfx(type);
+    setPreviewing(type);
+    window.setTimeout(() => setPreviewing((p) => (p === type ? null : p)), 600);
+  };
+
+  return (
+    <section>
+      <div className="mb-2 flex items-center justify-between">
+        <p className={sectionTitle}>Ses Efektleri ({state.sfx.length})</p>
+        {state.sfx.length > 0 && (
+          <button
+            onClick={() => {
+              dispatch({ type: "CLEAR_SFX" });
+              toast("Tüm ses efektleri temizlendi");
+            }}
+            className="font-mono text-[9px] tracking-wider text-dim transition-colors hover:text-rec"
+          >
+            TEMİZLE
+          </button>
+        )}
+      </div>
+
+      <div className="rounded-[4px] border border-line bg-panel p-3">
+        <p className="mb-2 font-mono text-[9px] leading-relaxed tracking-wider text-dim">
+          KÜTÜPHANE — TIKLA: ÖNİZLE + OYNATMA BAŞLIĞINA EKLE
+        </p>
+        <div className="grid grid-cols-3 gap-1.5">
+          {SFX_TYPES.map((t) => (
+            <button
+              key={t}
+              onClick={() => addAt(t)}
+              title={`${SFX_META[t].label} — ${SFX_META[t].dur.toFixed(2)} sn`}
+              className={`flex flex-col items-center gap-1 rounded-[3px] border px-1 py-2 transition-all hover:-translate-y-0.5 hover:shadow-[0_6px_18px_rgba(255,84,73,.15)] ${
+                previewing === t
+                  ? "border-rec bg-rec/15 text-rec"
+                  : "border-line bg-bg0 text-mut hover:border-rec/60 hover:text-ink"
+              }`}
+            >
+              <Icon name="wave" className={`h-3.5 w-3.5 ${previewing === t ? "pulse-dot" : ""}`} />
+              <span className="font-mono text-[8.5px] tracking-wide">{SFX_META[t].label}</span>
+            </button>
+          ))}
+        </div>
+        <p className="mt-2 font-mono text-[9px] leading-relaxed text-dim">
+          ▸ “otomatik ses efekti” — sahne tipine göre kendiliğinden yerleştirir
+        </p>
+      </div>
+
+      {state.sfx.length > 0 && (
+        <div className="mt-2 space-y-1.5">
+          {state.sfx.map((it) => (
+            <div key={it.id} className="flex items-center gap-2 rounded-[4px] border border-line bg-panel px-2.5 py-2">
+              <button
+                onClick={() => previewSfx(it.type)}
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[3px] border border-line text-rec transition-colors hover:border-rec hover:bg-rec/10"
+                title="Önizle"
+              >
+                <Icon name="play" className="ml-px h-3 w-3" />
+              </button>
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-mono text-[10.5px] text-ink">{SFX_META[it.type].label}</p>
+                <p className="font-mono text-[9px] text-dim">
+                  {fmtShort(it.start)} · {it.dur.toFixed(2)} sn
+                </p>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={Math.round(it.volume * 100)}
+                onChange={(e) =>
+                  dispatch({ type: "UPDATE_SFX", id: it.id, patch: { volume: Number(e.target.value) / 100 } })
+                }
+                className="range-amber w-14"
+                aria-label="Efekt sesi düzeyi"
+              />
+              <button
+                onClick={() => dispatch({ type: "REMOVE_SFX", id: it.id })}
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[3px] border border-line text-dim transition-colors hover:border-rec hover:text-rec"
+                title="Sil"
+              >
+                <Icon name="trash" className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
         </div>
       )}
     </section>

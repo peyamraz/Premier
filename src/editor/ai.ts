@@ -1,7 +1,8 @@
 import type { Dispatch } from "react";
 import type { AnimType, Easing, Filters } from "./model";
-import { DEFAULT_FILTERS, MIN_CLIP, clamp, cumStart, makeLayer, seqDuration, uid } from "./model";
-import type { Action, ProjectState } from "./state";
+import { DEFAULT_FILTERS, MIN_CLIP, clamp, clipDur, cumStart, makeLayer, seqDuration, uid } from "./model";
+import { SFX_META, SFX_TYPES, previewSfx, type SFXType } from "./sfx";
+import type { Action, ProjectState, SFXItem } from "./state";
 import { analyzeMedia, TYPE_LABEL, type AnalysisMap, type AnalysisResult } from "./analysis";
 
 export type EditMode = "full" | "assisted" | "manual";
@@ -86,6 +87,9 @@ type Intent =
   | { t: "autoMotion" }
   | { t: "analyze" }
   | { t: "beatsync" }
+  | { t: "sfxAdd"; type: SFXType | null }
+  | { t: "autoSfx" }
+  | { t: "ticker"; text: string }
   | { t: "unknown"; raw: string };
 
 /* ------------------------------------------------------------------ */
@@ -156,6 +160,28 @@ function parse(text: string, raw: string): Intent {
   if (text === "kurgula" || text === "otomatik kurgula") return { t: "auto" };
   if (/(analiz|tara|scan|incele)/.test(text)) return { t: "analyze" };
   if (/(beat|ritim|bpm|müzik)/.test(text) && /(kes|senkron|oturt|uydur)/.test(text)) return { t: "beatsync" };
+  if (/otomatik/.test(text) && /(ses|sfx|efekt)/.test(text)) return { t: "autoSfx" };
+  if (/(kayan yazı|akan yazı|ticker|yazı takibi)/.test(text)) {
+    const m = raw.match(/[:\-–]\s*(.+)$/);
+    return { t: "ticker", text: m ? m[1].trim() : "FRAMEFORGE PRO" };
+  }
+  if (/(ses efekti|ses:|efekt ekle|sfx)/.test(text)) {
+    const pick = (): SFXType | null => {
+      if (/(süpür|whoosh)/.test(text)) return "whoosh";
+      if (/(yüksel|riser)/.test(text)) return "riser";
+      if (/(vur|çarp|hit|darbe)/.test(text)) return "hit";
+      if (/pop/.test(text)) return "pop";
+      if (/tık|click/.test(text)) return "click";
+      if (/hışır|swish/.test(text)) return "swish";
+      if (/glitch/.test(text)) return "glitch";
+      if (/zil|ding/.test(text)) return "ding";
+      if (/bas|sub/.test(text)) return "subdrop";
+      if (/drone|ambiyans/.test(text)) return "drone";
+      if (/gümbür|boom|patla/.test(text)) return "boom";
+      return null;
+    };
+    return { t: "sfxAdd", type: pick() };
+  }
   if (/(altyazı|caption)/.test(text)) {
     const m = raw.match(/[:\-–]\s*(.+)$/);
     if (m) return { t: "captionAdd", text: m[1].trim() };
@@ -511,6 +537,36 @@ export async function executeCommand(raw: string, ctx: AICtx): Promise<void> {
     case "autoMotion":
       await runAutoMotion(ctx);
       break;
+    case "sfxAdd": {
+      const s = ctx.getState();
+      const total = seqDuration(s.clips);
+      const type: SFXType = intent.type ?? SFX_TYPES[s.sfx.length % SFX_TYPES.length];
+      const start = total > 0 ? clamp(Math.floor(ctx.getPos() * 4) / 4, 0, Math.max(0, total - 0.05)) : 0;
+      const item: SFXItem = { id: uid(), type, start, dur: SFX_META[type].dur, volume: 0.9 };
+      ctx.dispatch({ type: "ADD_SFX", item });
+      previewSfx(type);
+      ctx.log("ok", `“${SFX_META[type].label}” eklendi — ${fmtT(start)} noktasında çalacak`);
+      break;
+    }
+    case "autoSfx":
+      await runAutoSfx(ctx);
+      break;
+    case "ticker": {
+      const s = ctx.getState();
+      const total = seqDuration(s.clips);
+      const end = total > 0 ? Math.min(total, 10) : 8;
+      const layer = makeLayer("text", intent.text.toLocaleUpperCase("tr-TR"), 0, Math.max(end, 4));
+      layer.follow = "pan";
+      layer.size = 4;
+      layer.y = 88;
+      layer.animIn = "fade";
+      layer.animOut = "fade";
+      layer.color = "#ffb43c";
+      layer.font = "mono";
+      ctx.dispatch({ type: "ADD_LAYER", layer });
+      ctx.log("ok", `Kayan yazı eklendi: “${intent.text}” — ekranı ${Math.max(end, 4).toFixed(0)} sn'de tarıyor`);
+      break;
+    }
     case "unknown":
       ctx.log("warn", `“${intent.raw}” komutunu çözemedim.`);
       await sleep(180);
@@ -1042,4 +1098,125 @@ export async function applyReport(ctx: AICtx, bundle: ReportBundle, opts: ApplyO
   ctx.play();
   ctx.log(done.length ? "ok" : "warn", done.length ? `Uygulandı: ${done.join(" · ")}` : "Hiçbir işlem seçilmemiş");
   ctx.toast(done.length ? "Rapor uygulandı" : "İşlem seçilmedi");
+}
+
+/* ------------------------------------------------------------------ */
+/* otonom ses efekti ajanı — sahne tipine göre S1 izine efekt döşer    */
+/* ------------------------------------------------------------------ */
+
+export async function runAutoSfx(ctx: AICtx): Promise<void> {
+  const mk = (label: string): AgentStep => ({ id: uid(), label, status: "pending" });
+  const steps: AgentStep[] = [
+    mk("Analiz verileri okunuyor"),
+    mk("Geçiş efektleri yerleştiriliyor"),
+    mk("Ritim vurguları ekleniyor"),
+    mk("Ambiyans döşeniyor"),
+  ];
+  ctx.cancelRef.current = false;
+  ctx.setAgent([...steps]);
+  ctx.onScanning(true);
+  ctx.log("ai", "Ses efekti ajanı çalışıyor — sahne tipine göre efekt seçiyor…");
+
+  const set = (i: number, patch: Partial<AgentStep>) => {
+    steps[i] = { ...steps[i], ...patch };
+    ctx.setAgent([...steps]);
+  };
+  const cancelled = () => ctx.cancelRef.current;
+  const abort = () => {
+    for (let i = 0; i < steps.length; i++) if (steps[i].status === "pending" || steps[i].status === "run") steps[i] = { ...steps[i], status: "skip" };
+    ctx.setAgent([...steps]);
+  };
+
+  let placed = 0;
+  const add = (type: SFXType, start: number, volume = 0.9) => {
+    const item: SFXItem = { id: uid(), type, start: Math.max(0, start), dur: SFX_META[type].dur, volume };
+    ctx.dispatch({ type: "ADD_SFX", item });
+    placed++;
+  };
+
+  try {
+    /* 1 — analiz */
+    set(0, { status: "run" });
+    let s = ctx.getState();
+    let results = s.analysis;
+    if (!Object.keys(results).length && s.media.length) {
+      ctx.log("ai", "Analiz bulunamadı — önce tarıyorum…");
+      results = await analyzeAll(ctx);
+    }
+    if (cancelled()) return abort();
+    set(0, { status: "done", note: `${Object.keys(results).length} medya` });
+    s = ctx.getState();
+    const total = seqDuration(s.clips);
+    if (total === 0) {
+      set(1, { status: "skip" });
+      set(2, { status: "skip" });
+      set(3, { status: "skip" });
+      ctx.log("warn", "Zaman çizelgesi boş — önce klip ekleyin");
+      return;
+    }
+
+    /* 2 — geçiş efektleri: her klip sınırına, takip eden sahnenin tipine göre */
+    set(1, { status: "run" });
+    for (let i = 1; i < s.clips.length; i++) {
+      if (cancelled()) return abort();
+      const boundary = cumStart(s.clips, i);
+      const clip = s.clips[i];
+      const r = results[clip.mediaId];
+      const localT = boundary - cumStart(s.clips, i) + clip.in;
+      const seg = r?.segments.find((sg) => localT >= sg.start && localT < sg.end);
+      const fx: SFXType = seg?.type === "action" ? "hit" : seg?.type === "dialog" ? "click" : "whoosh";
+      add(fx, boundary - 0.05);
+      if (boundary > 1.6) add("riser", boundary - 1.45, 0.5);
+      await sleep(140);
+    }
+    set(1, { status: "done", note: `${s.clips.length - 1} geçiş` });
+    if (s.clips.length > 1) ctx.log("ok", `${s.clips.length - 1} geçişe sahne tipine uygun efekt yerleştirildi (aksiyon→vuruş, konuşma→tık, statik→süpürme)`);
+
+    /* 3 — ritim vurguları */
+    set(2, { status: "run" });
+    const withBpm = Object.values(results).find((r) => r.bpm && r.beats.length);
+    let beats = 0;
+    if (withBpm) {
+      const grid = withBpm.beats.filter((o) => o <= total);
+      if (grid.length) add("subdrop", grid[0] - 0.02, 0.85);
+      grid.forEach((o, i2) => {
+        if (i2 > 0 && i2 % 4 === 0 && beats < 8) {
+          add("pop", o - 0.02, 0.6);
+          beats++;
+        }
+      });
+      await sleep(300);
+    }
+    if (cancelled()) return abort();
+    set(2, { status: withBpm ? "done" : "skip", note: withBpm ? `BPM ${withBpm.bpm} · ${beats + 1} vurgu` : "tempo yok" });
+    if (withBpm) ctx.log("ok", `Ritim vurguları: BPM ${withBpm.bpm} — bas düşüş + ${beats} pop`);
+
+    /* 4 — ambiyans */
+    set(3, { status: "run" });
+    await sleep(400);
+    if (cancelled()) return abort();
+    if (total > 6) {
+      add("drone", 0, 0.35);
+      set(3, { status: "done", note: "drone @ %35" });
+      ctx.log("ok", "Düşük seviyeli drone ambiyansı başa döşendi");
+    } else {
+      set(3, { status: "skip", note: "sekans kısa" });
+    }
+
+    ctx.seek(0);
+    ctx.play();
+    ctx.log("ok", `Ses efekti yerleşimi tamam — ${placed} efekt (S1 izi)`);
+    ctx.toast(`${placed} ses efekti yerleştirildi`);
+  } catch {
+    ctx.log("warn", "Ses efekti ajanı sırasında bir sorun oluştu");
+  } finally {
+    ctx.onScanning(false);
+    if (cancelled()) {
+      abort();
+      ctx.log("warn", "Ses efekti ajanı iptal edildi");
+      window.setTimeout(() => ctx.setAgent(null), 1400);
+    } else {
+      window.setTimeout(() => ctx.setAgent(null), 2600);
+    }
+  }
 }

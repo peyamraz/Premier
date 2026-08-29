@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon, usePrefersReducedMotion } from "../lib/ui";
 import { FONT_FAMILIES, cumStart, filterCSS, fmtTC, layerPose } from "./model";
+import { getSfxUrl } from "./sfx";
 import { useEditor } from "./state";
 
 function VuMeter({ level, label }: { level: number; label: string }) {
@@ -63,6 +64,49 @@ export function Monitor({ scanning = false }: { scanning?: boolean }) {
     });
     ro.observe(el);
     return () => ro.disconnect();
+  }, []);
+
+  /* SFX oynatma motoru — zaman çizelgesindeki efektleri zamanında tetikler */
+  const sfxEls = useRef<Map<string, HTMLAudioElement>>(new Map());
+  useEffect(() => {
+    const active = new Set<string>();
+    if (playing) {
+      for (const it of state.sfx) {
+        if (seqPos >= it.start - 0.03 && seqPos < it.start + it.dur) active.add(it.id);
+      }
+    }
+    for (const it of state.sfx) {
+      const existing = sfxEls.current.get(it.id);
+      if (active.has(it.id) && !existing) {
+        void getSfxUrl(it.type).then((url) => {
+          if (sfxEls.current.get(it.id)) return;
+          const a = new Audio(url);
+          a.volume = it.volume * state.volume * (state.muted ? 0 : 1);
+          a.currentTime = Math.max(0, Math.min(seqPos - it.start, it.dur - 0.02));
+          void a.play().catch(() => {});
+          a.onended = () => sfxEls.current.delete(it.id);
+          sfxEls.current.set(it.id, a);
+        });
+      } else if (!active.has(it.id) && existing) {
+        existing.pause();
+        sfxEls.current.delete(it.id);
+      }
+    }
+    /* kaldırılmış efektleri temizle */
+    for (const [id, el] of sfxEls.current) {
+      if (!state.sfx.some((x) => x.id === id)) {
+        el.pause();
+        sfxEls.current.delete(id);
+      }
+    }
+  }, [state.sfx, seqPos, playing, state.volume, state.muted]);
+
+  useEffect(() => {
+    const els = sfxEls.current;
+    return () => {
+      for (const el of els.values()) el.pause();
+      els.clear();
+    };
   }, []);
 
   const activeClip = state.clips[activeIndex];
@@ -208,7 +252,8 @@ export function Monitor({ scanning = false }: { scanning?: boolean }) {
                 left: `${p.x}%`,
                 top: `${p.y}%`,
                 opacity: p.opacity / 100,
-                transform: `translate(-50%, -50%) rotate(${p.rot}deg) scale(${p.scale / 100})`,
+                transform: `translate(calc(-50% + ${p.jx}px), calc(-50% + ${p.jy}px)) rotate(${p.rot}deg) scale(${p.scale / 100})`,
+                filter: p.blur > 0.2 ? `blur(${p.blur}px)` : undefined,
                 clipPath: p.clip < 1 ? `inset(0 ${(1 - p.clip) * 100}% 0 0)` : undefined,
                 fontSize: fsPx,
                 color: L.color,

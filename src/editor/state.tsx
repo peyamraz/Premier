@@ -26,6 +26,15 @@ import {
   type MotionLayer,
 } from "./model";
 import type { AnalysisMap, AnalysisResult } from "./analysis";
+import type { SFXType } from "./sfx";
+
+export interface SFXItem {
+  id: string;
+  type: SFXType;
+  start: number; // saniye
+  dur: number; // saniye
+  volume: number; // 0-1
+}
 
 /* ------------------------------------------------------------------ */
 /* state                                                               */
@@ -37,6 +46,7 @@ export interface ProjectState {
   clips: Clip[];
   captions: Caption[];
   layers: MotionLayer[];
+  sfx: SFXItem[];
   analysis: AnalysisMap;
   filters: Filters;
   volume: number;
@@ -62,6 +72,10 @@ export type Action =
   | { type: "SELECT_CAPTION"; id: string | null }
   | { type: "SET_ANALYSIS_ENTRY"; mediaId: string; result: AnalysisResult }
   | { type: "CLEAR_ANALYSIS" }
+  | { type: "ADD_SFX"; item: SFXItem }
+  | { type: "REMOVE_SFX"; id: string }
+  | { type: "UPDATE_SFX"; id: string; patch: Partial<SFXItem> }
+  | { type: "CLEAR_SFX" }
   | { type: "ADD_LAYER"; layer: MotionLayer }
   | { type: "UPDATE_LAYER"; id: string; patch: Partial<MotionLayer> }
   | { type: "REMOVE_LAYER"; id: string }
@@ -151,6 +165,14 @@ function reducer(s: ProjectState, a: Action): ProjectState {
       };
     case "SELECT_CAPTION":
       return { ...s, selCaption: a.id, selClip: a.id ? null : s.selClip };
+    case "ADD_SFX":
+      return { ...s, sfx: [...s.sfx, a.item].sort((p, q) => p.start - q.start) };
+    case "REMOVE_SFX":
+      return { ...s, sfx: s.sfx.filter((x) => x.id !== a.id) };
+    case "UPDATE_SFX":
+      return { ...s, sfx: s.sfx.map((x) => (x.id === a.id ? { ...x, ...a.patch } : x)) };
+    case "CLEAR_SFX":
+      return { ...s, sfx: [] };
     case "SET_ANALYSIS_ENTRY":
       return { ...s, analysis: { ...s.analysis, [a.mediaId]: a.result } };
     case "CLEAR_ANALYSIS":
@@ -206,8 +228,12 @@ function reducer(s: ProjectState, a: Action): ProjectState {
         }) && [],
         clips: [],
         captions: [],
+        layers: [],
+        sfx: [],
+        analysis: {},
         selClip: null,
         selCaption: null,
+        selLayer: null,
       };
     default:
       return s;
@@ -220,6 +246,7 @@ const INITIAL: ProjectState = {
   clips: [],
   captions: [],
   layers: [],
+  sfx: [],
   analysis: {},
   filters: DEFAULT_FILTERS,
   volume: 0.9,
