@@ -2,6 +2,20 @@ import type { Dispatch } from "react";
 import type { AnimType, Easing, Filters } from "./model";
 import { DEFAULT_FILTERS, MIN_CLIP, clamp, cumStart, makeLayer, seqDuration, uid } from "./model";
 import type { Action, ProjectState } from "./state";
+import { analyzeMedia, TYPE_LABEL, type AnalysisMap, type AnalysisResult } from "./analysis";
+
+export type EditMode = "full" | "assisted" | "manual";
+export interface ReportBundle {
+  results: AnalysisMap;
+}
+export interface ApplyOptions {
+  scenes: boolean;
+  silence: boolean;
+  beatsnap: boolean;
+  color: boolean;
+  captions: boolean;
+  graphics: boolean;
+}
 
 /* ------------------------------------------------------------------ */
 /* tipler                                                              */
@@ -37,6 +51,9 @@ export interface AICtx {
   setAgent: (steps: AgentStep[] | null) => void;
   onScanning: (b: boolean) => void;
   cancelRef: { current: boolean };
+  prog: (label: string, pct: number) => void;
+  getMode: () => EditMode;
+  report: (r: ReportBundle | null) => void;
 }
 
 type Intent =
@@ -67,6 +84,8 @@ type Intent =
   | { t: "layerRemove" }
   | { t: "layerResize"; dir: "up" | "down" }
   | { t: "autoMotion" }
+  | { t: "analyze" }
+  | { t: "beatsync" }
   | { t: "unknown"; raw: string };
 
 /* ------------------------------------------------------------------ */
@@ -93,6 +112,8 @@ const HELP_LINES = [
 
 export const SUGGESTIONS: { label: string; cmd: string }[] = [
   { label: "Otomatik Kurgula", cmd: "otomatik kurgula" },
+  { label: "Analiz Et", cmd: "videoyu analiz et" },
+  { label: "Beat Senkron", cmd: "beat senkron kes" },
   { label: "Otomatik Grafik", cmd: "otomatik grafik" },
   { label: "Başlık Ekle", cmd: "başlık ekle: DENİZ & MERT" },
   { label: "Alt Bant", cmd: "alt bant: İrem — Gelin" },
@@ -133,6 +154,8 @@ function parse(text: string, raw: string): Intent {
     return { t: "autoMotion" };
   if (/(otomatik|otonom|kendin yap|akıllı kurgu|smart|auto)/.test(text) && /(kurgu|edit|düzenle|yap)/.test(text)) return { t: "auto" };
   if (text === "kurgula" || text === "otomatik kurgula") return { t: "auto" };
+  if (/(analiz|tara|scan|incele)/.test(text)) return { t: "analyze" };
+  if (/(beat|ritim|bpm|müzik)/.test(text) && /(kes|senkron|oturt|uydur)/.test(text)) return { t: "beatsync" };
   if (/(altyazı|caption)/.test(text)) {
     const m = raw.match(/[:\-–]\s*(.+)$/);
     if (m) return { t: "captionAdd", text: m[1].trim() };
@@ -259,9 +282,32 @@ export async function executeCommand(raw: string, ctx: AICtx): Promise<void> {
       }
       break;
     }
-    case "auto":
-      await runAutoEdit(ctx);
+    case "auto": {
+      const mode = ctx.getMode();
+      if (mode === "manual") {
+        ctx.log("warn", "Manuel moddasınız — otomasyon kapalı. Üstten TAM OTO ya da DESTEKLİ moda geçin.");
+      } else if (mode === "assisted") {
+        await analyzeOnly(ctx);
+      } else {
+        await runAutoEdit(ctx);
+      }
       break;
+    }
+    case "analyze":
+      await analyzeOnly(ctx);
+      break;
+    case "beatsync": {
+      const s = ctx.getState();
+      let results = s.analysis;
+      if (!Object.keys(results).length) {
+        ctx.log("ai", "Önce analiz çalıştırıyorum…");
+        results = await analyzeAll(ctx);
+        if (!Object.keys(results).length) break;
+      }
+      const n = snapToBeats(ctx, results);
+      ctx.log(n ? "ok" : "warn", n ? `${n} kesim beat ızgarasına oturtuldu` : "Yakındaki beat bulunamadı — kesimler olduğu gibi kaldı");
+      break;
+    }
     case "play":
       ctx.play();
       ctx.log("ok", "Oynatma başlatıldı");
@@ -486,9 +532,10 @@ export async function runAutoEdit(ctx: AICtx): Promise<void> {
   const steps: AgentStep[] = [
     mk("Medya kutusu taranıyor"),
     mk("Zaman çizelgesi kuruluyor"),
-    mk("Sahneler analiz ediliyor"),
-    mk("Ölü boşluklar kırpılıyor"),
-    mk("Sinematik renk paleti uygulanıyor"),
+    mk("Ses + görüntü gerçekten taranıyor"),
+    mk("Ölü boşluk ve sahne kesimleri"),
+    mk("Beat ızgarasına oturtuluyor"),
+    mk("Otomatik renk uygulanıyor"),
     mk("Altyazılar oluşturuluyor"),
     mk("Hareketli grafikler üretiliyor"),
   ];
@@ -542,48 +589,65 @@ export async function runAutoEdit(ctx: AICtx): Promise<void> {
       set(1, { status: "done", note: "mevcut kurgu korundu" });
     }
 
-    /* 3 — sahne analizi */
+    /* 3 — GERÇEK ANALİZ: ses çözümü + kare taraması */
     set(2, { status: "run" });
-    await sleep(900);
     if (cancelled()) return abort();
-    s = ctx.getState();
-    const candidates = s.clips.filter(
-      (c) => c.out - c.in > 3 && s.media.find((m) => m.id === c.mediaId)?.kind === "video",
+    const results = await analyzeAll(ctx);
+    if (cancelled()) return abort();
+    const foundScenes = Object.values(results).reduce((a, r) => a + r.scenes.length, 0);
+    const foundSilence = Object.values(results).reduce(
+      (a, r) => a + r.silence.reduce((x, sg) => x + (sg.end - sg.start), 0),
+      0,
     );
-    set(2, { status: "done", note: `${candidates.length} aday` });
+    set(2, { status: "done", note: `${foundScenes} sahne · ${foundSilence.toFixed(1)} sn boşluk` });
 
-    /* 4 — ölü boşluk kırpma */
+    /* 4 — analiz kesimleri: ölü boşluk at + sahne geçişlerinden böl */
     set(3, { status: "run" });
-    for (const c of candidates) {
-      if (cancelled()) return abort();
-      const fresh = ctx.getState().clips.find((k) => k.id === c.id);
-      if (!fresh) continue;
-      const span = fresh.out - fresh.in;
-      if (span <= 3) continue;
-      const nIn = fresh.in + span * 0.08;
-      const nOut = fresh.out - span * 0.12;
-      if (nOut - nIn >= MIN_CLIP + 0.2) {
-        ctx.dispatch({ type: "TRIM_CLIP", id: fresh.id, in: nIn, out: nOut });
-        trimmedCount++;
-        await sleep(170);
-      }
-    }
-    set(3, { status: "done", note: `${trimmedCount} klip` });
-    if (trimmedCount > 0) ctx.log("ok", `${trimmedCount} klipten giriş/çıkış boşlukları kırpıldı`);
-    else ctx.log("ai", "Kırpılacak ölü boşluk bulunamadı");
-
-    /* 5 — renk */
+    const cuts = await cutByAnalysis(ctx, results);
     if (cancelled()) return abort();
-    set(4, { status: "run" });
-    await sleep(750);
-    ctx.dispatch({ type: "SET_FILTER", patch: { ...DEFAULT_FILTERS, ...PRESETS.sinematik.f } });
-    set(4, { status: "done", note: "turuncu-teal" });
-    ctx.log("ok", "Renk paleti uygulandı: Sinematik (turuncu-teal)");
+    trimmedCount = cuts.silenceCuts + cuts.sceneCuts;
+    set(3, { status: "done", note: `${cuts.silenceCuts} boşluk · ${cuts.sceneCuts} sahne` });
+    if (cuts.silenceCuts || cuts.sceneCuts)
+      ctx.log("ok", `${cuts.silenceCuts} ölü boşluk kesildi · ${cuts.sceneCuts} sahne geçişinden bölündü`);
+    else ctx.log("ai", "Kesilecek ölü boşluk / sahne geçişi bulunamadı");
 
-    /* 6 — altyazılar */
+    /* 4b — beat ızgarası (gerçek BPM) */
+    set(4, { status: "run" });
+    const anyBpm = Object.values(results).find((r) => r.bpm)?.bpm ?? null;
+    let snapped = 0;
+    if (anyBpm) {
+      snapped = snapToBeats(ctx, results);
+      await sleep(300);
+    }
+    if (cancelled()) return abort();
+    if (anyBpm) {
+      set(4, { status: "done", note: `BPM ${anyBpm} · ${snapped} kesim` });
+      ctx.log("ok", `Kesimler BPM ${anyBpm} ızgarasına oturtuldu (${snapped} klip)`);
+    } else {
+      set(4, { status: "skip", note: "belirgin tempo yok" });
+    }
+
+    /* 5 — histogram tabanlı otomatik renk */
     if (cancelled()) return abort();
     set(5, { status: "run" });
-    await sleep(700);
+    await sleep(400);
+    const patch = mergedColorPatch(results);
+    if (Object.keys(patch).length) {
+      ctx.dispatch({ type: "SET_FILTER", patch: { ...DEFAULT_FILTERS, ...patch } });
+      const note =
+        Object.values(results).find((r) => r.colorNote.startsWith("otomatik"))?.colorNote ?? "otomatik seviye";
+      set(5, { status: "done", note });
+      ctx.log("ok", `Renk düzeltildi — ${note}`);
+    } else {
+      ctx.dispatch({ type: "SET_FILTER", patch: { ...DEFAULT_FILTERS, ...PRESETS.sinematik.f } });
+      set(5, { status: "done", note: "sinematik palet" });
+      ctx.log("ok", "Histogram dengeli — sinematik palet uygulandı");
+    }
+
+    /* 6 — altyazılar (analiz etiketli) */
+    if (cancelled()) return abort();
+    set(6, { status: "run" });
+    await sleep(500);
     s = ctx.getState();
     let acc = 0;
     const caps = s.clips.slice(0, 6).map((c, i) => {
@@ -592,7 +656,11 @@ export async function runAutoEdit(ctx: AICtx): Promise<void> {
       const end = Math.min(acc + d * 0.85, start + 3.5);
       acc += d;
       const media = s.media.find((m) => m.id === c.mediaId);
-      return { id: uid(), start, end, text: `${CAP_TEMPLATES[i % CAP_TEMPLATES.length]} • ${media?.name ?? `klip ${i + 1}`}` };
+      const r = results[c.mediaId];
+      const mid = (c.in + c.out) / 2;
+      const seg = r?.segments.find((sg) => mid >= sg.start && mid < sg.end);
+      const label = seg ? TYPE_LABEL[seg.type] : "Sahne";
+      return { id: uid(), start, end, text: `${label} • ${media?.name ?? `klip ${i + 1}`}` };
     });
     for (const cap of caps) {
       if (cancelled()) return abort();
@@ -600,11 +668,11 @@ export async function runAutoEdit(ctx: AICtx): Promise<void> {
       captionCount++;
       await sleep(110);
     }
-    set(5, { status: "done", note: `${captionCount} altyazı` });
+    set(6, { status: "done", note: `${captionCount} altyazı` });
 
     /* 7 — hareketli grafikler */
     if (cancelled()) return abort();
-    set(6, { status: "run" });
+    set(7, { status: "run" });
     await sleep(600);
     s = ctx.getState();
     let gfxCount = 0;
@@ -622,7 +690,7 @@ export async function runAutoEdit(ctx: AICtx): Promise<void> {
         gfxCount++;
       }
     }
-    set(6, { status: "done", note: gfxCount ? `${gfxCount} katman` : "mevcut korundu" });
+    set(7, { status: "done", note: gfxCount ? `${gfxCount} katman` : "mevcut korundu" });
     if (gfxCount) ctx.log("ok", `Jenerik katmanları eklendi: açılış başlığı${gfxCount > 1 ? " + kapanış kartı" : ""}`);
 
     ctx.log("ok", `Otomatik kurgu tamam — ${trimmedCount} kırpma · sinematik renk · ${captionCount} altyazı · ${gfxCount} grafik`);
@@ -761,4 +829,217 @@ export async function runAutoMotion(ctx: AICtx): Promise<void> {
       window.setTimeout(() => ctx.setAgent(null), 2600);
     }
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* GERÇEK ANALİZ MOTORU ENTEGRASYONU                                   */
+/* ------------------------------------------------------------------ */
+
+function logFindings(ctx: AICtx, name: string, r: AnalysisResult) {
+  const sil = r.silence.reduce((a, s) => a + (s.end - s.start), 0);
+  const parts = [
+    r.scenes.length ? `${r.scenes.length} sahne` : null,
+    sil > 0.2 ? `${sil.toFixed(1)} sn sessizlik` : null,
+    `hareket %${r.motionAvg}`,
+    r.bpm ? `BPM ${r.bpm}` : null,
+  ].filter(Boolean);
+  ctx.log("ai", `${name} → ${parts.join(" · ")}`);
+}
+
+export async function analyzeAll(ctx: AICtx): Promise<AnalysisMap> {
+  const results: AnalysisMap = {};
+  const s = ctx.getState();
+  ctx.onScanning(true);
+  for (const m of s.media) {
+    if (ctx.cancelRef.current) break;
+    const r = await analyzeMedia(m, (label, pct) => ctx.prog(`${m.name} — ${label}`, Math.round(pct)));
+    results[m.id] = r;
+    ctx.dispatch({ type: "SET_ANALYSIS_ENTRY", mediaId: m.id, result: r });
+    logFindings(ctx, m.name, r);
+  }
+  ctx.onScanning(false);
+  ctx.prog("", 0);
+  return results;
+}
+
+export async function analyzeOnly(ctx: AICtx): Promise<void> {
+  const s = ctx.getState();
+  if (s.media.length === 0) {
+    ctx.log("warn", "Analiz için medya kutusu boş — önce video yükleyin");
+    return;
+  }
+  ctx.log("ai", "Analiz başlıyor — ses çözülüyor, kareler taranıyor (cihazınızda)…");
+  const results = await analyzeAll(ctx);
+  if (!Object.keys(results).length) return;
+  ctx.report({ results });
+  ctx.log("ok", "Analiz raporu hazır — bulguları seçip uygulayın");
+}
+
+/* ölü boşlukları at + sahne geçişlerinden böl */
+export async function cutByAnalysis(ctx: AICtx, results: AnalysisMap): Promise<{ silenceCuts: number; sceneCuts: number }> {
+  let silenceCuts = 0;
+  let sceneCuts = 0;
+
+  for (const r of Object.values(results)) {
+    /* sessizlik bölgeleri */
+    for (const sil of r.silence) {
+      const covering = ctx
+        .getState()
+        .clips.filter((c) => c.mediaId === r.mediaId && c.in < sil.end - 0.15 && c.out > sil.start + 0.15);
+      for (const c of covering) {
+        if (ctx.cancelRef.current) return { silenceCuts, sceneCuts };
+        const fresh = ctx.getState().clips.find((k) => k.id === c.id);
+        if (!fresh) continue;
+        if (sil.start <= fresh.in + 0.2) {
+          if (sil.end < fresh.out - MIN_CLIP) {
+            ctx.dispatch({ type: "TRIM_CLIP", id: fresh.id, in: Math.min(sil.end, fresh.out - MIN_CLIP) });
+            silenceCuts++;
+            await sleep(90);
+          }
+        } else if (sil.end >= fresh.out - 0.2) {
+          if (sil.start > fresh.in + MIN_CLIP) {
+            ctx.dispatch({ type: "TRIM_CLIP", id: fresh.id, out: Math.max(sil.start, fresh.in + MIN_CLIP) });
+            silenceCuts++;
+            await sleep(90);
+          }
+        } else {
+          /* ortadaki boşluk: iki kez böl, ortayı kaldır */
+          ctx.dispatch({ type: "SPLIT_CLIP", id: fresh.id, at: sil.start });
+          await sleep(70);
+          const right = ctx
+            .getState()
+            .clips.find((k) => k.mediaId === r.mediaId && Math.abs(k.in - sil.start) < 0.06);
+          if (right) {
+            ctx.dispatch({ type: "SPLIT_CLIP", id: right.id, at: sil.end });
+            await sleep(70);
+            const mid = ctx
+              .getState()
+              .clips.find((k) => k.mediaId === r.mediaId && Math.abs(k.in - sil.start) < 0.06 && Math.abs(k.out - sil.end) < 0.06);
+            if (mid) {
+              ctx.dispatch({ type: "REMOVE_CLIP", id: mid.id });
+              silenceCuts++;
+              await sleep(90);
+            }
+          }
+        }
+      }
+    }
+
+    /* sahne geçişleri */
+    for (const b of r.scenes) {
+      if (ctx.cancelRef.current) return { silenceCuts, sceneCuts };
+      const fresh = ctx.getState().clips.find((c) => c.mediaId === r.mediaId && c.in < b - 0.25 && c.out > b + 0.25);
+      if (fresh) {
+        ctx.dispatch({ type: "SPLIT_CLIP", id: fresh.id, at: b });
+        sceneCuts++;
+        await sleep(90);
+      }
+    }
+  }
+  return { silenceCuts, sceneCuts };
+}
+
+/* kesimleri beat ızgarasına mıknatısla */
+export function snapToBeats(ctx: AICtx, results: AnalysisMap): number {
+  let n = 0;
+  for (const c of ctx.getState().clips) {
+    const r = results[c.mediaId];
+    if (!r?.beats?.length) continue;
+    let best = c.out;
+    let bd = 0.4;
+    for (const bt of r.beats) {
+      const d = Math.abs(bt - c.out);
+      if (d < bd) {
+        bd = d;
+        best = bt;
+      }
+      if (bt > c.out + 0.5) break;
+    }
+    if (best !== c.out && best > c.in + MIN_CLIP) {
+      ctx.dispatch({ type: "TRIM_CLIP", id: c.id, out: best });
+      n++;
+    }
+  }
+  return n;
+}
+
+/* histogram düzeltmelerini birleştir */
+export function mergedColorPatch(results: AnalysisMap): Partial<Filters> {
+  const keys = ["brightness", "contrast", "saturate"] as const;
+  const out: Partial<Filters> = {};
+  for (const k of keys) {
+    const vals = Object.values(results)
+      .map((r) => r.colorPatch[k])
+      .filter((v): v is number => typeof v === "number");
+    if (vals.length) out[k] = Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+  }
+  return out;
+}
+
+/* DESTEKLİ mod — rapor uygulaması */
+export async function applyReport(ctx: AICtx, bundle: ReportBundle, opts: ApplyOptions): Promise<void> {
+  ctx.log("user", "Rapordaki seçili işlemleri uygula");
+  let s = ctx.getState();
+  if (s.clips.length === 0 && s.media.length > 0) {
+    for (const m of s.media) ctx.dispatch({ type: "ADD_CLIP", clip: { id: uid(), mediaId: m.id, in: 0, out: m.duration } });
+    await sleep(80);
+  }
+
+  const done: string[] = [];
+  const filtered: AnalysisMap = {};
+  for (const [k, r] of Object.entries(bundle.results)) {
+    filtered[k] = { ...r, scenes: opts.scenes ? r.scenes : [], silence: opts.silence ? r.silence : [] };
+  }
+
+  if (opts.silence || opts.scenes) {
+    const cuts = await cutByAnalysis(ctx, filtered);
+    if (cuts.silenceCuts + cuts.sceneCuts > 0) done.push(`${cuts.silenceCuts + cuts.sceneCuts} kesim`);
+  }
+  if (opts.beatsnap) {
+    const n = snapToBeats(ctx, bundle.results);
+    if (n) done.push(`${n} beat kesimi`);
+  }
+  if (opts.color) {
+    const patch = mergedColorPatch(bundle.results);
+    if (Object.keys(patch).length) {
+      ctx.dispatch({ type: "SET_FILTER", patch: { ...DEFAULT_FILTERS, ...patch } });
+      done.push("otomatik renk");
+    }
+  }
+  if (opts.captions) {
+    s = ctx.getState();
+    let acc = 0;
+    for (const c of s.clips.slice(0, 6)) {
+      const d = c.out - c.in;
+      const start = acc + Math.min(0.4, d * 0.1);
+      const end = Math.min(acc + d * 0.85, start + 3.5);
+      acc += d;
+      const media = s.media.find((m) => m.id === c.mediaId);
+      const r = bundle.results[c.mediaId];
+      const mid = (c.in + c.out) / 2;
+      const seg = r?.segments.find((sg) => mid >= sg.start && mid < sg.end);
+      ctx.dispatch({
+        type: "ADD_CAPTION",
+        caption: { id: uid(), start, end, text: `${seg ? TYPE_LABEL[seg.type] : "Sahne"} • ${media?.name ?? "klip"}` },
+      });
+      await sleep(60);
+    }
+    done.push("altyazılar");
+  }
+  if (opts.graphics) {
+    s = ctx.getState();
+    if (s.layers.length === 0) {
+      const total = seqDuration(s.clips);
+      ctx.dispatch({
+        type: "ADD_LAYER",
+        layer: makeLayer("title", (s.name || "yeni_proje").replace(/_/g, " ").toLocaleUpperCase("tr-TR"), 0, Math.min(3.5, Math.max(2, total || 4))),
+      });
+      done.push("jenerik");
+    }
+  }
+
+  ctx.seek(0);
+  ctx.play();
+  ctx.log(done.length ? "ok" : "warn", done.length ? `Uygulandı: ${done.join(" · ")}` : "Hiçbir işlem seçilmemiş");
+  ctx.toast(done.length ? "Rapor uygulandı" : "İşlem seçilmedi");
 }

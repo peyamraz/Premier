@@ -2,11 +2,15 @@ import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 
 import { Icon } from "../lib/ui";
 import {
   SUGGESTIONS,
+  applyReport,
   executeCommand,
   type AgentStep,
   type AICtx,
+  type ApplyOptions,
+  type EditMode,
   type LogKind,
   type LogLine,
+  type ReportBundle,
 } from "./ai";
 import { clamp, uid } from "./model";
 import { useEditor } from "./state";
@@ -80,6 +84,130 @@ function AgentCard({ steps, onCancel }: { steps: AgentStep[]; onCancel: () => vo
   );
 }
 
+const MODES: { key: EditMode; label: string; hint: string }[] = [
+  { key: "full", label: "TAM OTO", hint: "Tek komutla tamamını uygular" },
+  { key: "assisted", label: "DESTEKLİ", hint: "Analiz raporu sunar, siz seçersiniz" },
+  { key: "manual", label: "MANUEL", hint: "Otomasyon kapalı, komutlar tek tek" },
+];
+
+function ReportCard({
+  bundle,
+  busy,
+  onClose,
+  onApply,
+}: {
+  bundle: ReportBundle;
+  busy: boolean;
+  onClose: () => void;
+  onApply: (o: ApplyOptions) => void;
+}) {
+  const [opts, setOpts] = useState<ApplyOptions>({
+    scenes: true,
+    silence: true,
+    beatsnap: true,
+    color: true,
+    captions: true,
+    graphics: false,
+  });
+  const { state } = useEditor();
+  const nameOf = (id: string) => state.media.find((m) => m.id === id)?.name ?? id.slice(-6);
+  const rs = Object.values(bundle.results);
+  const silTotal = rs.reduce((a, r) => a + r.silence.reduce((x, s) => x + (s.end - s.start), 0), 0);
+  const sceneTotal = rs.reduce((a, r) => a + r.scenes.length, 0);
+  const bpm = rs.find((r) => r.bpm)?.bpm ?? null;
+  const hasColor = rs.some((r) => Object.keys(r.colorPatch).length > 0);
+
+  const rows: { key: keyof ApplyOptions; label: string; detail: string; available: boolean }[] = [
+    { key: "silence", label: "Ölü boşlukları kes", detail: silTotal > 0.2 ? `${silTotal.toFixed(1)} sn bulundu` : "tespit edilmedi", available: silTotal > 0.2 },
+    { key: "scenes", label: "Sahne geçişlerinden böl", detail: sceneTotal ? `${sceneTotal} geçiş` : "tespit edilmedi", available: sceneTotal > 0 },
+    { key: "beatsnap", label: "Kesimleri beat ızgarasına oturt", detail: bpm ? `BPM ${bpm}` : "belirgin tempo yok", available: !!bpm },
+    { key: "color", label: "Otomatik renk (histogram)", detail: rs.find((r) => r.colorNote.startsWith("otomatik"))?.colorNote ?? "profil dengeli", available: hasColor },
+    { key: "captions", label: "Tür etiketli altyazılar", detail: `${rs.reduce((a, r) => a + r.segments.length, 0)} segment`, available: true },
+    { key: "graphics", label: "Açılış jeneriği ekle", detail: "başlık + kapanış", available: true },
+  ];
+  const selCount = rows.filter((r) => r.available && opts[r.key]).length;
+
+  return (
+    <div className="toast-in absolute bottom-full right-2 z-50 mb-2 w-[26rem] max-w-[calc(100vw-16px)] rounded-[5px] border border-scope/45 bg-panel shadow-[0_24px_70px_rgba(0,0,0,.55)]">
+      <div className="flex items-center gap-2.5 border-b border-line px-3 py-2">
+        <span className="flex h-6 w-6 items-center justify-center rounded-[3px] bg-scope/15 text-scope">
+          <Icon name="wave" className="h-3.5 w-3.5" />
+        </span>
+        <div>
+          <p className="font-display text-base leading-none tracking-[0.08em] text-ink">ANALİZ RAPORU</p>
+          <p className="mt-0.5 font-mono text-[9px] tracking-[0.18em] text-dim">
+            {rs.length} MEDYA • ORT. HAREKET %{Math.round(rs.reduce((a, r) => a + r.motionAvg, 0) / Math.max(1, rs.length))}
+          </p>
+        </div>
+        <button onClick={onClose} className="ml-auto rounded-[3px] border border-line px-2 py-1 font-mono text-[9.5px] tracking-wider text-mut transition-colors hover:border-rec/60 hover:text-rec">
+          KAPAT
+        </button>
+      </div>
+
+      {/* medya bulguları */}
+      <ul className="max-h-24 overflow-y-auto border-b border-line px-3 py-2">
+        {rs.map((r) => (
+          <li key={r.mediaId} className="flex items-center gap-2 py-[3px] font-mono text-[10px] text-mut">
+            <Icon name="film" className="h-3 w-3 shrink-0 text-dim" />
+            <span className="truncate" title={nameOf(r.mediaId)}>{nameOf(r.mediaId)}</span>
+            <span className="ml-auto flex shrink-0 gap-1.5">
+              {r.scenes.length > 0 && <span className="rounded-[2px] bg-amb/12 px-1 py-px text-[8.5px] text-amb">{r.scenes.length} sahne</span>}
+              {r.silence.length > 0 && (
+                <span className="rounded-[2px] bg-rec/12 px-1 py-px text-[8.5px] text-rec">
+                  {r.silence.reduce((a, s) => a + (s.end - s.start), 0).toFixed(1)} sn boş
+                </span>
+              )}
+              {r.bpm && <span className="rounded-[2px] bg-scope/12 px-1 py-px text-[8.5px] text-scope">{r.bpm} BPM</span>}
+              <span className="rounded-[2px] bg-cue/12 px-1 py-px text-[8.5px] text-cue">%{r.motionAvg} hareket</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+
+      {/* uygulanacak işlemler */}
+      <ul className="px-3 py-2">
+        {rows.map((row) => {
+          const on = row.available && opts[row.key];
+          return (
+            <li key={row.key}>
+              <button
+                onClick={() => row.available && setOpts((o) => ({ ...o, [row.key]: !o[row.key] }))}
+                disabled={!row.available}
+                className={`flex w-full items-center gap-2.5 rounded-[3px] px-1.5 py-[5px] text-left transition-colors ${
+                  row.available ? "hover:bg-panel2" : "cursor-not-allowed opacity-40"
+                }`}
+              >
+                <span
+                  className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[2px] border transition-colors ${
+                    on ? "border-scope bg-scope text-bg0" : "border-line2 bg-bg0"
+                  }`}
+                >
+                  {on && <Icon name="check" className="h-2.5 w-2.5" />}
+                </span>
+                <span className={`font-mono text-[11px] ${on ? "text-ink" : "text-mut"}`}>{row.label}</span>
+                <span className="ml-auto shrink-0 font-mono text-[9.5px] text-dim">{row.detail}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+
+      <div className="flex gap-2 border-t border-line px-3 py-2.5">
+        <button
+          onClick={() => onApply(opts)}
+          disabled={busy || selCount === 0}
+          className="flex flex-1 items-center justify-center gap-2 rounded-[3px] bg-scope py-2 font-mono text-[11px] font-bold tracking-wider text-bg0 transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-30"
+        >
+          <Icon name="check" className="h-3.5 w-3.5" /> SEÇİLENLERİ UYGULA ({selCount})
+        </button>
+        <button onClick={onClose} className="rounded-[3px] border border-line px-3 font-mono text-[10px] text-mut transition-colors hover:text-ink">
+          VAZGEÇ
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function AIBar({ inputRef, onExport, onImport, onScanning }: AIBarProps) {
   const { state, dispatch, seqPos, playing, totalDur, togglePlay, pause, seek, splitAtPlayhead, toast } = useEditor();
   const [value, setValue] = useState("");
@@ -87,6 +215,9 @@ export function AIBar({ inputRef, onExport, onImport, onScanning }: AIBarProps) 
   const [lines, setLines] = useState<LogLine[]>([]);
   const [logOpen, setLogOpen] = useState(false);
   const [agent, setAgent] = useState<AgentStep[] | null>(null);
+  const [mode, setMode] = useState<EditMode>("full");
+  const [prog, setProg] = useState<{ label: string; pct: number }>({ label: "", pct: 0 });
+  const [report, setReport] = useState<ReportBundle | null>(null);
 
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -148,6 +279,9 @@ export function AIBar({ inputRef, onExport, onImport, onScanning }: AIBarProps) 
     setAgent,
     onScanning,
     cancelRef,
+    prog: (label, pct) => setProg({ label, pct }),
+    getMode: () => mode,
+    report: (r) => setReport(r),
   };
 
   const run = async (cmd: string) => {
@@ -163,9 +297,23 @@ export function AIBar({ inputRef, onExport, onImport, onScanning }: AIBarProps) 
     }
   };
 
+  const runApply = async (b: ReportBundle, o: ApplyOptions) => {
+    setReport(null);
+    setBusy(true);
+    try {
+      await applyReport(ctxRef.current!, b, o);
+    } finally {
+      setBusy(false);
+      inputRef.current?.focus();
+    }
+  };
+
   return (
     <div className="relative z-40 shrink-0 border-t-2 border-amb/25 bg-panel">
       {agent && <AgentCard steps={agent} onCancel={() => (cancelRef.current = true)} />}
+      {report && !agent && (
+        <ReportCard bundle={report} busy={busy} onClose={() => setReport(null)} onApply={(o) => void runApply(report, o)} />
+      )}
 
       {/* komut satırı */}
       <div className="flex items-center gap-2 px-3 pt-2.5">
@@ -178,6 +326,23 @@ export function AIBar({ inputRef, onExport, onImport, onScanning }: AIBarProps) 
           AI
           <span className={`h-1.5 w-1.5 rounded-full ${busy ? "pulse-dot bg-amb" : "bg-scope"}`} />
         </span>
+        <div className="hidden shrink-0 items-center rounded-[3px] border border-line bg-bg0 p-0.5 lg:flex" role="group" aria-label="Otomasyon modu">
+          {MODES.map((m) => (
+            <button
+              key={m.key}
+              onClick={() => {
+                setMode(m.key);
+                log("ai", `Mod: ${m.label} — ${m.hint}`);
+              }}
+              title={m.hint}
+              className={`rounded-[2px] px-2 py-1 font-mono text-[9px] tracking-wider transition-all ${
+                mode === m.key ? "bg-amb font-bold text-bg0" : "text-dim hover:text-mut"
+              }`}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
         <input
           ref={inputRef}
           value={value}
@@ -225,6 +390,22 @@ export function AIBar({ inputRef, onExport, onImport, onScanning }: AIBarProps) 
           <Icon name="trash" className="h-3 w-3" />
         </button>
       </div>
+
+      {/* gerçek analiz ilerlemesi */}
+      {busy && prog.pct > 0 && (
+        <div className="px-3 pt-2">
+          <div className="flex items-center justify-between gap-3 font-mono text-[9px] tracking-wider text-dim">
+            <span className="truncate">{prog.label || "işleniyor"}</span>
+            <span className="tabular-nums text-amb">%{prog.pct}</span>
+          </div>
+          <div className="mt-1 h-1 overflow-hidden rounded-full bg-panel2">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-amb2 to-amb transition-[width] duration-200"
+              style={{ width: `${prog.pct}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* hazır komutlar */}
       <div className="flex items-center gap-1.5 overflow-x-auto px-3 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">

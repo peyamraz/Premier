@@ -25,6 +25,7 @@ import {
   type MediaItem,
   type MotionLayer,
 } from "./model";
+import type { AnalysisMap, AnalysisResult } from "./analysis";
 
 /* ------------------------------------------------------------------ */
 /* state                                                               */
@@ -36,6 +37,7 @@ export interface ProjectState {
   clips: Clip[];
   captions: Caption[];
   layers: MotionLayer[];
+  analysis: AnalysisMap;
   filters: Filters;
   volume: number;
   muted: boolean;
@@ -58,6 +60,8 @@ export type Action =
   | { type: "UPDATE_CAPTION"; id: string; patch: Partial<Caption> }
   | { type: "REMOVE_CAPTION"; id: string }
   | { type: "SELECT_CAPTION"; id: string | null }
+  | { type: "SET_ANALYSIS_ENTRY"; mediaId: string; result: AnalysisResult }
+  | { type: "CLEAR_ANALYSIS" }
   | { type: "ADD_LAYER"; layer: MotionLayer }
   | { type: "UPDATE_LAYER"; id: string; patch: Partial<MotionLayer> }
   | { type: "REMOVE_LAYER"; id: string }
@@ -147,6 +151,10 @@ function reducer(s: ProjectState, a: Action): ProjectState {
       };
     case "SELECT_CAPTION":
       return { ...s, selCaption: a.id, selClip: a.id ? null : s.selClip };
+    case "SET_ANALYSIS_ENTRY":
+      return { ...s, analysis: { ...s.analysis, [a.mediaId]: a.result } };
+    case "CLEAR_ANALYSIS":
+      return { ...s, analysis: {} };
     case "ADD_LAYER":
       return {
         ...s,
@@ -212,6 +220,7 @@ const INITIAL: ProjectState = {
   clips: [],
   captions: [],
   layers: [],
+  analysis: {},
   filters: DEFAULT_FILTERS,
   volume: 0.9,
   muted: false,

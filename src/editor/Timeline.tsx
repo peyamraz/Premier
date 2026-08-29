@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from "react";
 import { Icon } from "../lib/ui";
+import { TYPE_BADGE, TYPE_LABEL } from "./analysis";
 import { MIN_CLIP, clamp, clipDur, cumStart, findClipAt, fmtShort, seqDuration } from "./model";
 import { useEditor } from "./state";
 
@@ -383,6 +384,63 @@ export function Timeline() {
                       </span>
                       {isActive && <span className="pulse-dot h-1 w-1 shrink-0 self-center rounded-full bg-amb" />}
                     </span>
+
+                    {/* analiz katmanı: sahne çizgileri, sessizlik, beat */}
+                    {(() => {
+                      const an = state.analysis[c.mediaId];
+                      if (!an || isImg) return null;
+                      const seg = an.segments.find((sg) => {
+                        const mid = (c.in + c.out) / 2;
+                        return mid >= sg.start && mid < sg.end;
+                      });
+                      const badge = seg ? TYPE_BADGE[seg.type] : null;
+                      return (
+                        <>
+                          {an.silence.map((sg, i) => {
+                            const s = Math.max(sg.start, c.in);
+                            const e = Math.min(sg.end, c.out);
+                            if (e - s < 0.1) return null;
+                            return (
+                              <span
+                                key={`si${i}`}
+                                title="ölü boşluk"
+                                className="pointer-events-none absolute bottom-0 top-0 bg-rec/25"
+                                style={{ left: `${((s - c.in) / dur) * 100}%`, width: `${((e - s) / dur) * 100}%` }}
+                              />
+                            );
+                          })}
+                          {an.scenes
+                            .filter((b) => b > c.in + 0.2 && b < c.out - 0.2)
+                            .map((b) => (
+                              <span
+                                key={`sc${b}`}
+                                title="sahne geçişi"
+                                className="pointer-events-none absolute bottom-0 top-0 w-px bg-ink/70"
+                                style={{ left: `${((b - c.in) / dur) * 100}%` }}
+                              />
+                            ))}
+                          {an.beats
+                            .filter((b) => b > c.in && b < c.out)
+                            .slice(0, 48)
+                            .map((b) => (
+                              <span
+                                key={`bt${b}`}
+                                className="pointer-events-none absolute bottom-0 h-1.5 w-px bg-amb/50"
+                                style={{ left: `${((b - c.in) / dur) * 100}%` }}
+                              />
+                            ))}
+                          {badge && (
+                            <span
+                              title={TYPE_LABEL[seg!.type]}
+                              className={`pointer-events-none absolute right-1 top-0.5 flex h-3 w-3 items-center justify-center rounded-[2px] font-mono text-[8px] font-bold ${badge.cls}`}
+                            >
+                              {badge.letter}
+                            </span>
+                          )}
+                        </>
+                      );
+                    })()}
+
                     <span data-mode="trimL" className="absolute inset-y-0 left-0 w-2 cursor-ew-resize bg-black/20 opacity-0 transition-opacity hover:opacity-100" />
                     <span data-mode="trimR" className="absolute inset-y-0 right-0 w-2 cursor-ew-resize bg-black/20 opacity-0 transition-opacity hover:opacity-100" />
                   </div>

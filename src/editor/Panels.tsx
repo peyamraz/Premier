@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { Icon } from "../lib/ui";
+import { TYPE_LABEL } from "./analysis";
 import {
   ANIMS,
   EASINGS,
@@ -179,6 +180,76 @@ function Slider({
   );
 }
 
+function AnalysisPanel({ an, name }: { an: import("./analysis").AnalysisResult; name: string }) {
+  const dominant = an.segments.reduce(
+    (acc, s) => {
+      acc[s.type] = (acc[s.type] ?? 0) + (s.end - s.start);
+      return acc;
+    },
+    {} as Record<string, number>,
+  );
+  const domType = (Object.entries(dominant).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "static") as "action" | "static" | "dialog";
+  const silTotal = an.silence.reduce((a, s) => a + (s.end - s.start), 0);
+
+  return (
+    <section>
+      <p className={`${sectionTitle} mb-2`}>Analiz Bulguları</p>
+      <div className="rounded-[4px] border border-scope/30 bg-panel p-3">
+        <p className="flex items-center gap-2 font-mono text-[10px] text-dim">
+          <Icon name="wave" className="h-3 w-3 text-scope" />
+          <span className="truncate">{name}</span>
+        </p>
+        <div className="mt-2 grid grid-cols-3 gap-1.5 font-mono text-[9.5px]">
+          <span className="rounded-[3px] bg-bg0 px-1.5 py-1.5 text-center">
+            <span className="block text-dim">TÜR</span>
+            <span className={`font-bold ${domType === "action" ? "text-amb" : domType === "dialog" ? "text-scope" : "text-cue"}`}>
+              {TYPE_LABEL[domType].toLocaleUpperCase("tr-TR")}
+            </span>
+          </span>
+          <span className="rounded-[3px] bg-bg0 px-1.5 py-1.5 text-center">
+            <span className="block text-dim">HAREKET</span>
+            <span className="tabular-nums text-amb">%{an.motionAvg}</span>
+          </span>
+          <span className="rounded-[3px] bg-bg0 px-1.5 py-1.5 text-center">
+            <span className="block text-dim">TEMPO</span>
+            <span className="tabular-nums text-scope">{an.bpm ? `${an.bpm} BPM` : "—"}</span>
+          </span>
+          <span className="rounded-[3px] bg-bg0 px-1.5 py-1.5 text-center">
+            <span className="block text-dim">SAHNE</span>
+            <span className="tabular-nums text-ink">{an.scenes.length}</span>
+          </span>
+          <span className="rounded-[3px] bg-bg0 px-1.5 py-1.5 text-center">
+            <span className="block text-dim">BOŞLUK</span>
+            <span className="tabular-nums text-rec">{silTotal > 0.2 ? `${silTotal.toFixed(1)} sn` : "yok"}</span>
+          </span>
+          <span className="rounded-[3px] bg-bg0 px-1.5 py-1.5 text-center">
+            <span className="block text-dim">BEAT</span>
+            <span className="tabular-nums text-amb">{an.beats.length || "—"}</span>
+          </span>
+        </div>
+        {an.bestFrame && an.bestFrame.thumb && (
+          <div className="mt-2 flex items-center gap-2">
+            <img src={an.bestFrame.thumb} alt="En iyi kare" className="h-12 w-20 rounded-[3px] border border-line object-cover" />
+            <span className="font-mono text-[9px] leading-relaxed text-dim">
+              EN İYİ KARE
+              <br />
+              <span className="text-amb">{fmtShort(an.bestFrame.time)}</span> — küçük resim adayı
+            </span>
+          </div>
+        )}
+        <p className="mt-2 border-t border-line pt-2 font-mono text-[9.5px] leading-relaxed text-mut">{an.colorNote}</p>
+        <ul className="mt-1.5 space-y-1">
+          {an.suggestions.map((s) => (
+            <li key={s} className="flex gap-1.5 font-mono text-[9.5px] leading-snug text-dim">
+              <span className="text-amb">▸</span> {s}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </section>
+  );
+}
+
 export function Inspector() {
   const { state, dispatch, seek, seqPos, splitAtPlayhead, setInAtPlayhead, setOutAtPlayhead, toast } = useEditor();
   const selClip = state.clips.find((c) => c.id === state.selClip) ?? null;
@@ -238,6 +309,14 @@ export function Inspector() {
             </p>
           )}
         </section>
+
+        {/* analiz bulguları */}
+        {selMedia && state.analysis[selMedia.id] && (
+          <AnalysisPanel an={state.analysis[selMedia.id]} name={selMedia.name} />
+        )}
+        {!selMedia && state.media.length > 0 && Object.keys(state.analysis).length > 0 && (
+          <AnalysisPanel an={Object.values(state.analysis)[0]} name={state.media.find((m) => m.id === Object.values(state.analysis)[0].mediaId)?.name ?? ""} />
+        )}
 
         {/* görünüm */}
         <section>
