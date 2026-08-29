@@ -1,6 +1,6 @@
 import type { Dispatch } from "react";
-import type { Filters } from "./model";
-import { DEFAULT_FILTERS, MIN_CLIP, clamp, seqDuration, uid } from "./model";
+import type { AnimType, Easing, Filters } from "./model";
+import { DEFAULT_FILTERS, MIN_CLIP, clamp, cumStart, makeLayer, seqDuration, uid } from "./model";
 import type { Action, ProjectState } from "./state";
 
 /* ------------------------------------------------------------------ */
@@ -23,6 +23,7 @@ export interface AgentStep {
 
 export interface AICtx {
   getState: () => ProjectState;
+  getPos: () => number;
   dispatch: Dispatch<Action>;
   play: () => void;
   pause: () => void;
@@ -58,6 +59,14 @@ type Intent =
   | { t: "mute"; on?: boolean }
   | { t: "volume"; v: number }
   | { t: "select"; which: "first" | "last" }
+  | { t: "layerTitle"; text: string }
+  | { t: "layerLower"; text: string }
+  | { t: "layerText"; text: string }
+  | { t: "layerAnim"; anim?: AnimType; easing?: Easing }
+  | { t: "layerClear" }
+  | { t: "layerRemove" }
+  | { t: "layerResize"; dir: "up" | "down" }
+  | { t: "autoMotion" }
   | { t: "unknown"; raw: string };
 
 /* ------------------------------------------------------------------ */
@@ -76,17 +85,20 @@ export const PRESETS: Record<string, { label: string; f: Partial<Filters> }> = {
 const HELP_LINES = [
   "KURGU — “burada böl” · “seçili klibi sil” · “son klibi sil” · “hepsini temizle”",
   "GÖRÜNTÜ — “sinematik” · “sıcak renk” · “siyah beyaz” · “canlı” · “parlaklık +15” · “döndür” · “yatay çevir” · “renkleri sıfırla”",
+  "GRAFİK — “başlık ekle: DENİZ & MERT” · “alt bant: İrem — Gelin” · “metin: hoş geldiniz” · “animasyon: daktilo” · “easing: zıplayan” · “yazı büyüt” · “grafikleri temizle”",
   "ALTYAZI — “altyazı ekle: Merhaba dünya” · “altyazıları temizle”",
   "GEZİNME — “oynat” · “durdur” · “5 saniye ileri” · “yarısına git” · “sona git”",
-  "PROJE — “video yükle” · “dışa aktar” · “sesi kapat” · “otomatik kurgula”",
+  "PROJE — “video yükle” · “dışa aktar” · “sesi kapat” · “otomatik kurgula” · “otomatik grafik”",
 ];
 
 export const SUGGESTIONS: { label: string; cmd: string }[] = [
   { label: "Otomatik Kurgula", cmd: "otomatik kurgula" },
+  { label: "Otomatik Grafik", cmd: "otomatik grafik" },
+  { label: "Başlık Ekle", cmd: "başlık ekle: DENİZ & MERT" },
+  { label: "Alt Bant", cmd: "alt bant: İrem — Gelin" },
+  { label: "Daktilo Animasyon", cmd: "animasyon: daktilo" },
   { label: "Sinematik Renk", cmd: "sinematik renk uygula" },
-  { label: "Siyah-Beyaz", cmd: "siyah beyaz yap" },
   { label: "Burada Böl", cmd: "burada böl" },
-  { label: "+5 sn", cmd: "5 saniye ileri" },
   { label: "Altyazı Ekle", cmd: "altyazı ekle: Yeni sahne" },
   { label: "Dışa Aktar", cmd: "dışa aktar" },
 ];
@@ -103,8 +115,22 @@ const num = (s: string): number | null => {
   return parseFloat(m[1].replace(",", "."));
 };
 
+/** “başlık ekle: DENİZ & MERT” → “DENİZ & MERT” (iki nokta ya da anahtar kelime temizliği) */
+function extractLayerText(raw: string, kws: RegExp): string {
+  const m = raw.match(/[:\-–—]\s*(.+)$/);
+  if (m && m[1].trim().length > 1) return m[1].trim();
+  const rest = raw
+    .replace(kws, " ")
+    .replace(/[:\-–—]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return rest;
+}
+
 function parse(text: string, raw: string): Intent {
   if (/(yardım|yardim|komutlar|neler yapabilir|help)/.test(text)) return { t: "help" };
+  if (/(otomatik|otonom|auto)[\s-]*(grafik|motion|efekt|jenerik)/.test(text) || /grafikleri?[\s-]*oluştur/.test(text))
+    return { t: "autoMotion" };
   if (/(otomatik|otonom|kendin yap|akıllı kurgu|smart|auto)/.test(text) && /(kurgu|edit|düzenle|yap)/.test(text)) return { t: "auto" };
   if (text === "kurgula" || text === "otomatik kurgula") return { t: "auto" };
   if (/(altyazı|caption)/.test(text)) {
@@ -113,6 +139,34 @@ function parse(text: string, raw: string): Intent {
     if (/(sil|temizle|kaldır)/.test(text)) return { t: "captionClear" };
     return { t: "captionAdd", text: "Yeni altyazı" };
   }
+
+  /* hareketli grafik komutları */
+  if (/grafik(ler|leri)?i?[\s-]*(sil|temizle|kaldır)|^(sil|temizle)[\s-]*grafik/.test(text)) return { t: "layerClear" };
+  if (/(katman|layer)[\s-]*(sil|kaldır)/.test(text)) return { t: "layerRemove" };
+  if (/(yazıyı?|fontu?|puntoyu?)[\s-]*(büyüt|büyült|büyült)/.test(text)) return { t: "layerResize", dir: "up" };
+  if (/(yazıyı?|fontu?|puntoyu?)[\s-]*(küçült|küçült)/.test(text)) return { t: "layerResize", dir: "down" };
+  if (/(animasyon|easing|hareket)/.test(text) && /(grafik|katman|başlık|bant|metin|animasyon|easing)/.test(text)) {
+    if (/(daktilo|typewriter|yazılarak)/.test(text)) return { t: "layerAnim", anim: "typewriter" };
+    if (/(perde|wipe|siline)/.test(text)) return { t: "layerAnim", anim: "wipe" };
+    if (/(yaklaş|zoom|büyüyerek)/.test(text)) return { t: "layerAnim", anim: "zoom" };
+    if (/(kay|slide)/.test(text)) return { t: "layerAnim", anim: "slideUp" };
+    if (/(sol|fade)/.test(text)) return { t: "layerAnim", anim: "fade" };
+    if (/(zıpla|bounce)/.test(text)) return { t: "layerAnim", easing: "bounce" };
+    if (/(taş|back|overshoot)/.test(text)) return { t: "layerAnim", easing: "back" };
+    if (/(doğrusal|linear)/.test(text)) return { t: "layerAnim", easing: "linear" };
+    if (/(giriş[\s-]*çıkış|in[\s-]*out)/.test(text)) return { t: "layerAnim", easing: "easeInOut" };
+    return { t: "layerAnim", easing: "easeOut" };
+  }
+  if (/(başlık|title|jenerik)/.test(text)) {
+    return { t: "layerTitle", text: extractLayerText(raw, /(başlık|title|jenerik|ekle|yeni|oluştur|katman|grafik)/gi) };
+  }
+  if (/(alt[\s-]?bant|lower[\s-]?third|isim[\s-]?bandı|alt[\s-]?yazı[\s-]?bandı)/.test(text)) {
+    return { t: "layerLower", text: extractLayerText(raw, /(alt[\s-]?bant|lower[\s-]?third|isim[\s-]?bandı|ekle|yeni|oluştur|katman|grafik)/gi) };
+  }
+  if (/(metin[\s-]?katmanı|yazı[\s-]?katmanı)/.test(text) || /^metin[:\s-]/.test(text)) {
+    return { t: "layerText", text: extractLayerText(raw, /(metin|yazı|katmanı|katman|ekle|yeni|oluştur|grafik)/gi) };
+  }
+
   if (/(oynat|başlat|play)/.test(text)) return { t: "play" };
   if (/(durdur|duraklat|pause|^dur$)/.test(text)) return { t: "pause" };
   if (/(böl|kes|split|cut|razor)/.test(text)) return { t: "split" };
@@ -341,6 +395,76 @@ export async function executeCommand(raw: string, ctx: AICtx): Promise<void> {
       } else ctx.log("warn", "Zaman çizelgesinde klip yok");
       break;
     }
+    case "layerTitle":
+    case "layerLower":
+    case "layerText": {
+      const s = ctx.getState();
+      const total = seqDuration(s.clips);
+      const kind = intent.t === "layerTitle" ? "title" : intent.t === "layerLower" ? "lower" : "text";
+      const def = kind === "title" ? "YENİ BAŞLIK" : kind === "lower" ? "Ad Soyad — Unvan" : "yeni metin";
+      const text = intent.text || def;
+      const start = total > 0 ? clamp(Math.floor(ctx.getPos() * 2) / 2, 0, Math.max(0, total - 0.5)) : 0;
+      const layer = makeLayer(kind, text, start, Math.max(start + 4, Math.min(start + 4, total > 0 ? total : start + 4)));
+      ctx.dispatch({ type: "ADD_LAYER", layer });
+      ctx.seek(start);
+      const animName = kind === "title" ? "yukarı kayarak" : kind === "lower" ? "soldan kayarak" : "daktilo ile yazılarak";
+      ctx.log("ok", `${kind === "title" ? "Başlık" : kind === "lower" ? "Alt bant" : "Metin"} eklendi: “${text}” — ${animName} giriyor (${fmtT(start)}–${fmtT(layer.end)})`);
+      break;
+    }
+    case "layerAnim": {
+      const s = ctx.getState();
+      const L = s.layers.find((l) => l.id === s.selLayer) ?? s.layers[s.layers.length - 1];
+      if (!L) {
+        ctx.log("warn", "Önce bir grafik katmanı ekleyin (“başlık ekle: …” ya da “otomatik grafik”)");
+        break;
+      }
+      const patch: Partial<typeof L> = {};
+      if (intent.anim) patch.animIn = intent.anim;
+      if (intent.easing) patch.easing = intent.easing;
+      ctx.dispatch({ type: "UPDATE_LAYER", id: L.id, patch });
+      const what = intent.anim
+        ? `giriş animasyonu “${intent.anim === "typewriter" ? "Daktilo" : intent.anim === "wipe" ? "Perde" : intent.anim === "zoom" ? "Yaklaş" : intent.anim === "slideUp" ? "Yukarı kay" : "Solma"}”`
+        : `easing “${intent.easing === "bounce" ? "Zıplayan" : intent.easing === "back" ? "Taşmalı" : intent.easing === "linear" ? "Doğrusal" : intent.easing === "easeInOut" ? "Giriş-çıkış" : "Yumuşak çıkış"}”`;
+      ctx.log("ok", `“${L.text}” katmanına ${what} uygulandı`);
+      ctx.seek(Math.max(0, L.start - 0.2));
+      break;
+    }
+    case "layerClear": {
+      const s = ctx.getState();
+      if (s.layers.length === 0) {
+        ctx.log("warn", "Silinecek grafik katmanı yok");
+        break;
+      }
+      ctx.dispatch({ type: "SET_LAYERS", layers: [] });
+      ctx.log("ok", `${s.layers.length} grafik katmanı temizlendi`);
+      break;
+    }
+    case "layerRemove": {
+      const s = ctx.getState();
+      const L = s.layers.find((l) => l.id === s.selLayer) ?? s.layers[s.layers.length - 1];
+      if (!L) {
+        ctx.log("warn", "Silinecek grafik katmanı yok");
+        break;
+      }
+      ctx.dispatch({ type: "REMOVE_LAYER", id: L.id });
+      ctx.log("ok", `Katman silindi: “${L.text}”`);
+      break;
+    }
+    case "layerResize": {
+      const s = ctx.getState();
+      const L = s.layers.find((l) => l.id === s.selLayer) ?? s.layers[s.layers.length - 1];
+      if (!L) {
+        ctx.log("warn", "Önce bir grafik katmanı ekleyin");
+        break;
+      }
+      const next = clamp(intent.dir === "up" ? L.size * 1.35 : L.size * 0.72, 1, 16);
+      ctx.dispatch({ type: "UPDATE_LAYER", id: L.id, patch: { size: Math.round(next * 10) / 10 } });
+      ctx.log("ok", `Punto ${intent.dir === "up" ? "büyütüldü" : "küçültüldü"}: %${L.size} → %${Math.round(next * 10) / 10}`);
+      break;
+    }
+    case "autoMotion":
+      await runAutoMotion(ctx);
+      break;
     case "unknown":
       ctx.log("warn", `“${intent.raw}” komutunu çözemedim.`);
       await sleep(180);
@@ -348,6 +472,8 @@ export async function executeCommand(raw: string, ctx: AICtx): Promise<void> {
       break;
   }
 }
+
+
 
 /* ------------------------------------------------------------------ */
 /* otonom kurgu ajanı                                                  */
@@ -364,6 +490,7 @@ export async function runAutoEdit(ctx: AICtx): Promise<void> {
     mk("Ölü boşluklar kırpılıyor"),
     mk("Sinematik renk paleti uygulanıyor"),
     mk("Altyazılar oluşturuluyor"),
+    mk("Hareketli grafikler üretiliyor"),
   ];
   ctx.cancelRef.current = false;
   ctx.setAgent([...steps]);
@@ -474,7 +601,31 @@ export async function runAutoEdit(ctx: AICtx): Promise<void> {
       await sleep(110);
     }
     set(5, { status: "done", note: `${captionCount} altyazı` });
-    ctx.log("ok", `Otomatik kurgu tamam — ${trimmedCount} kırpma · sinematik renk · ${captionCount} altyazı`);
+
+    /* 7 — hareketli grafikler */
+    if (cancelled()) return abort();
+    set(6, { status: "run" });
+    await sleep(600);
+    s = ctx.getState();
+    let gfxCount = 0;
+    if (s.layers.length === 0) {
+      const total = seqDuration(s.clips);
+      const intro = makeLayer("title", (s.name || "yeni_proje").replace(/_/g, " ").toLocaleUpperCase("tr-TR"), 0, Math.min(3.5, Math.max(2, total)));
+      ctx.dispatch({ type: "ADD_LAYER", layer: intro });
+      gfxCount++;
+      await sleep(220);
+      if (total > 5) {
+        const outro = makeLayer("title", "SON", Math.max(0, total - 3), total + 0.5);
+        outro.animIn = "zoom";
+        outro.easing = "easeInOut";
+        ctx.dispatch({ type: "ADD_LAYER", layer: outro });
+        gfxCount++;
+      }
+    }
+    set(6, { status: "done", note: gfxCount ? `${gfxCount} katman` : "mevcut korundu" });
+    if (gfxCount) ctx.log("ok", `Jenerik katmanları eklendi: açılış başlığı${gfxCount > 1 ? " + kapanış kartı" : ""}`);
+
+    ctx.log("ok", `Otomatik kurgu tamam — ${trimmedCount} kırpma · sinematik renk · ${captionCount} altyazı · ${gfxCount} grafik`);
     ctx.toast("Otomatik kurgu tamamlandı");
   } catch {
     ctx.log("warn", "Otomatik kurgu sırasında bir sorun oluştu");
@@ -483,6 +634,128 @@ export async function runAutoEdit(ctx: AICtx): Promise<void> {
     if (cancelled()) {
       abort();
       ctx.log("warn", "Otomatik kurgu iptal edildi");
+      window.setTimeout(() => ctx.setAgent(null), 1400);
+    } else {
+      window.setTimeout(() => ctx.setAgent(null), 2600);
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* otonom grafik ajanı (mini After Effects)                            */
+/* ------------------------------------------------------------------ */
+
+const cleanName = (name: string): string =>
+  name
+    .replace(/\.[a-z0-9]{2,5}$/i, "")
+    .replace(/[_-]+/g, " ")
+    .trim();
+
+export async function runAutoMotion(ctx: AICtx): Promise<void> {
+  const mk = (label: string): AgentStep => ({ id: uid(), label, status: "pending" });
+  const steps: AgentStep[] = [
+    mk("Grafik motoru hazırlanıyor"),
+    mk("Açılış jeneriği tasarlanıyor"),
+    mk("Alt bantlar yerleştiriliyor"),
+    mk("Kapanış kartı ekleniyor"),
+  ];
+  ctx.cancelRef.current = false;
+  ctx.setAgent([...steps]);
+  ctx.onScanning(true);
+  ctx.log("ai", "Otonom grafik ajanı çalışıyor — jenerik, bantlar ve kapanış kartı tasarlanıyor…");
+
+  const set = (i: number, patch: Partial<AgentStep>) => {
+    steps[i] = { ...steps[i], ...patch };
+    ctx.setAgent([...steps]);
+  };
+  const cancelled = () => ctx.cancelRef.current;
+  const abort = () => {
+    for (let i = 0; i < steps.length; i++) if (steps[i].status === "pending" || steps[i].status === "run") steps[i] = { ...steps[i], status: "skip" };
+    ctx.setAgent([...steps]);
+  };
+
+  let added = 0;
+  try {
+    /* 1 — hazırlık */
+    set(0, { status: "run" });
+    await sleep(650);
+    if (cancelled()) return abort();
+    const s = ctx.getState();
+    const total = seqDuration(s.clips);
+    if (s.media.length === 0 && s.layers.length > 0) {
+      set(0, { status: "done", note: "hazır" });
+      ctx.log("warn", "Medya yok — mevcut grafikler üzerinde çalışıyorum");
+    }
+    set(0, { status: "done", note: total > 0 ? `${fmtT(total)} sekans` : "boş sekans" });
+
+    /* 2 — açılış jeneriği */
+    set(1, { status: "run" });
+    await sleep(700);
+    if (cancelled()) return abort();
+    const s2 = ctx.getState();
+    const title = makeLayer(
+      "title",
+      (s2.name || "yeni_proje").replace(/_/g, " ").toLocaleUpperCase("tr-TR"),
+      0,
+      total > 0 ? Math.min(3.5, Math.max(2, total)) : 4,
+    );
+    ctx.dispatch({ type: "ADD_LAYER", layer: title });
+    added++;
+    set(1, { status: "done", note: `“${title.text}”` });
+    ctx.log("ok", `Açılış jeneriği: “${title.text}” — yukarı kayarak giriyor`);
+    await sleep(260);
+
+    /* 3 — alt bantlar */
+    set(2, { status: "run" });
+    const s3 = ctx.getState();
+    if (cancelled()) return abort();
+    let acc = 0;
+    let lowers = 0;
+    for (const c of s3.clips.slice(0, 3)) {
+      if (cancelled()) return abort();
+      const d = c.out - c.in;
+      const media = s3.media.find((m) => m.id === c.mediaId);
+      const label = media ? cleanName(media.name) : `Sahne ${lowers + 1}`;
+      const lower = makeLayer("lower", label, acc + 0.5, acc + Math.min(d, 4));
+      ctx.dispatch({ type: "ADD_LAYER", layer: lower });
+      added++;
+      lowers++;
+      acc += d;
+      await sleep(240);
+    }
+    set(2, { status: "done", note: lowers ? `${lowers} bant` : "klip yok" });
+    if (lowers) ctx.log("ok", `${lowers} alt bant yerleştirildi — soldan kayarak giriyor`);
+
+    /* 4 — kapanış kartı */
+    if (cancelled()) return abort();
+    set(3, { status: "run" });
+    await sleep(550);
+    const s4 = ctx.getState();
+    const total4 = seqDuration(s4.clips);
+    if (total4 > 5) {
+      const outro = makeLayer("title", "SON", Math.max(0, total4 - 3), total4 + 0.5);
+      outro.animIn = "zoom";
+      outro.easing = "easeInOut";
+      outro.size = 10;
+      ctx.dispatch({ type: "ADD_LAYER", layer: outro });
+      added++;
+      set(3, { status: "done", note: "zoom + ease" });
+      ctx.log("ok", "Kapanış kartı: “SON” — yaklaşarak giriyor");
+    } else {
+      set(3, { status: "skip", note: "sekans kısa" });
+    }
+
+    ctx.seek(0);
+    ctx.play();
+    ctx.log("ok", `Otonom grafik tamam — ${added} katman (jenerik + bantlar + kapanış)`);
+    ctx.toast("Otomatik grafik hazır");
+  } catch {
+    ctx.log("warn", "Grafik ajanı sırasında bir sorun oluştu");
+  } finally {
+    ctx.onScanning(false);
+    if (cancelled()) {
+      abort();
+      ctx.log("warn", "Grafik ajanı iptal edildi");
       window.setTimeout(() => ctx.setAgent(null), 1400);
     } else {
       window.setTimeout(() => ctx.setAgent(null), 2600);

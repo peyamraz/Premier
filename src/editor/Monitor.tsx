@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon, usePrefersReducedMotion } from "../lib/ui";
-import { FPS, cumStart, filterCSS, fmtTC } from "./model";
+import { FONT_FAMILIES, cumStart, filterCSS, fmtTC, layerPose } from "./model";
 import { useEditor } from "./state";
 
 function VuMeter({ level, label }: { level: number; label: string }) {
@@ -46,11 +46,23 @@ export function Monitor({ scanning = false }: { scanning?: boolean }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const [full, setFull] = useState(false);
   const [safe, setSafe] = useState(false);
+  const [stageW, setStageW] = useState(960);
 
   useEffect(() => {
     const onFs = () => setFull(Boolean(document.fullscreenElement));
     document.addEventListener("fullscreenchange", onFs);
     return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w) setStageW(w);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
   const activeClip = state.clips[activeIndex];
@@ -176,6 +188,45 @@ export function Monitor({ scanning = false }: { scanning?: boolean }) {
             </span>
           </div>
         )}
+
+        {/* hareketli grafik katmanları */}
+        {state.layers.map((L) => {
+          const p = layerPose(L, seqPos);
+          if (!p.visible) return null;
+          const isSel = state.selLayer === L.id;
+          const fsPx = (L.size / 100) * stageW;
+          const shown = L.animIn === "typewriter" ? L.text.slice(0, p.chars) : L.text;
+          return (
+            <button
+              key={L.id}
+              onClick={() => dispatch({ type: "SELECT_LAYER", id: L.id })}
+              title={`${L.name} — tıklayınca seçilir`}
+              className={`absolute z-[6] cursor-pointer whitespace-pre text-left leading-tight transition-shadow ${
+                isSel ? "ants-frame" : ""
+              }`}
+              style={{
+                left: `${p.x}%`,
+                top: `${p.y}%`,
+                opacity: p.opacity / 100,
+                transform: `translate(-50%, -50%) rotate(${p.rot}deg) scale(${p.scale / 100})`,
+                clipPath: p.clip < 1 ? `inset(0 ${(1 - p.clip) * 100}% 0 0)` : undefined,
+                fontSize: fsPx,
+                color: L.color,
+                fontFamily: FONT_FAMILIES[L.font],
+                textTransform: L.upper ? "uppercase" : "none",
+                letterSpacing: L.font === "display" ? "0.04em" : "0.02em",
+                background: L.bg || undefined,
+                padding: L.bg ? "0.22em 0.55em" : "0.06em 0.14em",
+                textShadow: L.bg ? "none" : "0 2px 14px rgba(0,0,0,.65)",
+              }}
+            >
+              {shown}
+              {L.animIn === "typewriter" && p.chars < L.text.length && (
+                <span className="blink" style={{ color: L.color }}>▌</span>
+              )}
+            </button>
+          );
+        })}
 
         {totalDur === 0 && (
           <div className="absolute inset-0 z-[7] flex flex-col items-center justify-center gap-2 text-center">

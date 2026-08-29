@@ -128,6 +128,7 @@ export function AIBar({ inputRef, onExport, onImport, onScanning }: AIBarProps) 
   const ctxRef = useRef<AICtx | null>(null);
   ctxRef.current = {
     getState: () => stateRef.current,
+    getPos: () => seqPosRef.current,
     dispatch,
     play: () => {
       if (!stateRef.current.clips.length) {

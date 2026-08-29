@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { Icon } from "../lib/ui";
-import { clipDur, filterCSS, fmtShort, seqDuration } from "./model";
+import { FONT_FAMILIES, clipDur, filterCSS, fmtShort, layerPose, seqDuration } from "./model";
 import { useEditor } from "./state";
 
 type Stage = "setup" | "render" | "done";
@@ -12,6 +12,8 @@ const RES: Record<ResKey, { label: string; w: number; h: number }> = {
   "720": { label: "720p", w: 1280, h: 720 },
   "480": { label: "480p", w: 854, h: 480 },
 };
+
+const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 
 function waitEvent(el: HTMLVideoElement, ev: string, timeout = 2500): Promise<void> {
   return new Promise((resolve) => {
@@ -170,6 +172,45 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
       ctx.fillText(cap.text, W / 2 - tw / 2, by + fs * 0.85);
     };
 
+    const drawLayers = (t: number) => {
+      for (const L of state.layers) {
+        const p = layerPose(L, t);
+        if (!p.visible || p.opacity <= 0.5) continue;
+        const fs = Math.max(6, (L.size / 100) * W);
+        const weight = L.font === "display" ? "" : "600 ";
+        ctx.save();
+        ctx.globalAlpha = clamp01(p.opacity / 100);
+        ctx.translate((p.x / 100) * W, (p.y / 100) * H);
+        ctx.rotate((p.rot * Math.PI) / 180);
+        ctx.scale(p.scale / 100, p.scale / 100);
+        ctx.font = `${weight}${fs}px ${FONT_FAMILIES[L.font]}`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        let text = L.upper ? L.text.toLocaleUpperCase("tr-TR") : L.text;
+        if (L.animIn === "typewriter") text = text.slice(0, p.chars);
+        const tw = ctx.measureText(text).width;
+        const bh = fs * 1.35;
+        if (p.clip < 1) {
+          ctx.beginPath();
+          ctx.rect(-tw / 2 - fs, -bh / 2 - fs, (tw + fs * 2) * p.clip, bh + fs * 2);
+          ctx.clip();
+        }
+        if (L.bg) {
+          ctx.fillStyle = L.bg;
+          ctx.globalAlpha = clamp01(p.opacity / 100) * 0.88;
+          ctx.fillRect(-tw / 2 - fs * 0.55, -bh / 2, tw + fs * 1.1, bh);
+          ctx.globalAlpha = clamp01(p.opacity / 100);
+        } else {
+          ctx.shadowColor = "rgba(0,0,0,.6)";
+          ctx.shadowBlur = fs * 0.35;
+          ctx.shadowOffsetY = fs * 0.06;
+        }
+        ctx.fillStyle = L.color;
+        ctx.fillText(text, 0, 0);
+        ctx.restore();
+      }
+    };
+
     rec.start(250);
     const t0 = performance.now();
     const elapsed = () => (performance.now() - t0) / 1000;
@@ -181,6 +222,7 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
           drawFn();
           const t = elapsed();
           drawCaption(t);
+          drawLayers(t);
           setProgress(Math.min(1, t / Math.max(0.001, totalDur)));
           if (cond()) return resolve();
           requestAnimationFrame(tick);

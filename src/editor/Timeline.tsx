@@ -3,7 +3,7 @@ import { Icon } from "../lib/ui";
 import { MIN_CLIP, clamp, clipDur, cumStart, findClipAt, fmtShort, seqDuration } from "./model";
 import { useEditor } from "./state";
 
-type DragMode = "scrub" | "move" | "trimL" | "trimR" | "capL" | "capR";
+type DragMode = "scrub" | "move" | "trimL" | "trimR" | "capL" | "capR" | "layerL" | "layerR";
 
 interface DragInfo {
   mode: DragMode;
@@ -62,6 +62,7 @@ export function Timeline() {
     const handle = target.closest<HTMLElement>("[data-mode]");
     const clipEl = target.closest<HTMLElement>("[data-clip]");
     const capEl = target.closest<HTMLElement>("[data-cap]");
+    const layerEl = target.closest<HTMLElement>("[data-layer]");
     const ruler = target.closest<HTMLElement>("[data-ruler]");
 
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -117,6 +118,26 @@ export function Timeline() {
       dispatch({ type: "SELECT_CAPTION", id: capEl.dataset.cap! });
       return;
     }
+    if (handle && layerEl) {
+      const L = state.layers.find((l) => l.id === layerEl.dataset.layer);
+      if (!L) return;
+      dispatch({ type: "SELECT_LAYER", id: L.id });
+      drag.current = {
+        mode: handle.dataset.mode as DragMode,
+        id: L.id,
+        startX: e.clientX,
+        origIn: 0,
+        origOut: 0,
+        origStart: L.start,
+        origEnd: L.end,
+        moved: false,
+      };
+      return;
+    }
+    if (layerEl) {
+      dispatch({ type: "SELECT_LAYER", id: layerEl.dataset.layer! });
+      return;
+    }
     if (ruler || true) {
       drag.current = {
         mode: "scrub",
@@ -159,6 +180,14 @@ export function Timeline() {
         dispatch({ type: "UPDATE_CAPTION", id: d.id, patch: { start: clamp(d.origStart + dx / pps, 0, d.origEnd - MIN_CLIP) } });
       } else {
         dispatch({ type: "UPDATE_CAPTION", id: d.id, patch: { end: clamp(d.origEnd + dx / pps, d.origStart + MIN_CLIP, total + 30) } });
+      }
+      return;
+    }
+    if (d.mode === "layerL" || d.mode === "layerR") {
+      if (d.mode === "layerL") {
+        dispatch({ type: "UPDATE_LAYER", id: d.id, patch: { start: clamp(d.origStart + dx / pps, 0, d.origEnd - MIN_CLIP) } });
+      } else {
+        dispatch({ type: "UPDATE_LAYER", id: d.id, patch: { end: clamp(d.origEnd + dx / pps, d.origStart + MIN_CLIP, 600) } });
       }
       return;
     }
@@ -362,6 +391,49 @@ export function Timeline() {
               {state.clips.length === 0 && (
                 <div className="flex h-full items-center px-3 font-mono text-[10px] tracking-[0.18em] text-dim">
                   ▸ MEDYA KUTUSUNDAKİ “+” İLE KLİP EKLEYİN
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* grafik izi */}
+          <div className="flex h-10 border-b border-line/60">
+            <div className="sticky left-0 z-10 flex w-11 shrink-0 items-center justify-center border-r border-line bg-panel font-mono text-[10px] font-semibold text-amb">
+              G1
+            </div>
+            <div className="relative flex-1" style={{ width }}>
+              {state.layers.map((L) => {
+                const isSel = state.selLayer === L.id;
+                const tone =
+                  L.kind === "title"
+                    ? { bd: "rgba(255,180,60,.5)", bg: "rgba(255,180,60,.13)", tx: "#ffd48a" }
+                    : L.kind === "lower"
+                      ? { bd: "rgba(59,214,176,.45)", bg: "rgba(59,214,176,.12)", tx: "#8fe9d2" }
+                      : { bd: "rgba(111,177,255,.45)", bg: "rgba(111,177,255,.12)", tx: "#a9cdff" };
+                return (
+                  <div
+                    key={L.id}
+                    data-layer={L.id}
+                    className={`clip absolute bottom-1.5 top-1.5 cursor-pointer overflow-hidden rounded-[3px] border px-1.5 ${isSel ? "sel" : ""}`}
+                    style={{
+                      left: L.start * pps,
+                      width: Math.max(24, (L.end - L.start) * pps),
+                      background: tone.bg,
+                      borderColor: tone.bd,
+                    }}
+                    title={`${L.name} (${fmtShort(L.start)}–${fmtShort(L.end)})`}
+                  >
+                    <span className="block truncate pt-1 font-mono text-[9px]" style={{ color: tone.tx }}>
+                      {L.kind === "title" ? "◆" : L.kind === "lower" ? "▬" : "▸"} {L.text}
+                    </span>
+                    <span data-mode="layerL" className="absolute inset-y-0 left-0 w-2 cursor-ew-resize" />
+                    <span data-mode="layerR" className="absolute inset-y-0 right-0 w-2 cursor-ew-resize" />
+                  </div>
+                );
+              })}
+              {state.layers.length === 0 && (
+                <div className="flex h-full items-center px-3 font-mono text-[10px] tracking-[0.14em] text-dim">
+                  ▸ GRAFİK YOK — AI KONSOLUNA “otomatik grafik” YAZIN
                 </div>
               )}
             </div>

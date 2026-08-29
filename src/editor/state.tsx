@@ -23,6 +23,7 @@ import {
   type Clip,
   type Filters,
   type MediaItem,
+  type MotionLayer,
 } from "./model";
 
 /* ------------------------------------------------------------------ */
@@ -34,11 +35,13 @@ export interface ProjectState {
   media: MediaItem[];
   clips: Clip[];
   captions: Caption[];
+  layers: MotionLayer[];
   filters: Filters;
   volume: number;
   muted: boolean;
   selClip: string | null;
   selCaption: string | null;
+  selLayer: string | null;
 }
 
 export type Action =
@@ -55,6 +58,11 @@ export type Action =
   | { type: "UPDATE_CAPTION"; id: string; patch: Partial<Caption> }
   | { type: "REMOVE_CAPTION"; id: string }
   | { type: "SELECT_CAPTION"; id: string | null }
+  | { type: "ADD_LAYER"; layer: MotionLayer }
+  | { type: "UPDATE_LAYER"; id: string; patch: Partial<MotionLayer> }
+  | { type: "REMOVE_LAYER"; id: string }
+  | { type: "SELECT_LAYER"; id: string | null }
+  | { type: "SET_LAYERS"; layers: MotionLayer[] }
   | { type: "SET_FILTER"; patch: Partial<Filters> }
   | { type: "RESET_FILTERS" }
   | { type: "SET_VOLUME"; volume: number }
@@ -139,6 +147,38 @@ function reducer(s: ProjectState, a: Action): ProjectState {
       };
     case "SELECT_CAPTION":
       return { ...s, selCaption: a.id, selClip: a.id ? null : s.selClip };
+    case "ADD_LAYER":
+      return {
+        ...s,
+        layers: [...s.layers, a.layer].sort((p, q) => p.start - q.start),
+        selLayer: a.layer.id,
+        selClip: null,
+        selCaption: null,
+      };
+    case "UPDATE_LAYER":
+      return {
+        ...s,
+        layers: s.layers.map((l) => (l.id === a.id ? { ...l, ...a.patch } : l)),
+      };
+    case "REMOVE_LAYER":
+      return {
+        ...s,
+        layers: s.layers.filter((l) => l.id !== a.id),
+        selLayer: s.selLayer === a.id ? null : s.selLayer,
+      };
+    case "SELECT_LAYER":
+      return {
+        ...s,
+        selLayer: a.id,
+        selClip: a.id ? null : s.selClip,
+        selCaption: a.id ? null : s.selCaption,
+      };
+    case "SET_LAYERS":
+      return {
+        ...s,
+        layers: a.layers,
+        selLayer: a.layers.length === 1 ? a.layers[0].id : null,
+      };
     case "SET_FILTER":
       return { ...s, filters: { ...s.filters, ...a.patch } };
     case "RESET_FILTERS":
@@ -171,11 +211,13 @@ const INITIAL: ProjectState = {
   media: [],
   clips: [],
   captions: [],
+  layers: [],
   filters: DEFAULT_FILTERS,
   volume: 0.9,
   muted: false,
   selClip: null,
   selCaption: null,
+  selLayer: null,
 };
 
 /* ------------------------------------------------------------------ */
