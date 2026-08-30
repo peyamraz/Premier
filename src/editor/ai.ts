@@ -97,6 +97,7 @@ type Intent =
   | { t: "musicOff" }
   | { t: "smartCut"; kind: "silence" | "scenes" }
   | { t: "bgmProc"; kind: ProcKind }
+  | { t: "frame"; ratio: string }
   | { t: "unknown"; raw: string };
 
 /* ------------------------------------------------------------------ */
@@ -193,6 +194,13 @@ function parse(text: string, raw: string): Intent {
   if (/(sessizlik|sessiz|ölü boşluk|boşluk)[\wğüşöçı ]*(kes|sil|at|kaldır)/.test(text) || /(kes|at)[\w ]*(sessizlik|boşluk)/.test(text))
     return { t: "smartCut", kind: "silence" };
   if (/sahne[\wğüşöçı ]*(böl|kes|ayır)/.test(text)) return { t: "smartCut", kind: "scenes" };
+  {
+    const rm = text.match(/(16\s*[:×x]\s*9|9\s*[:×x]\s*16|1\s*[:×x]\s*1|4\s*[:×x]\s*5|21\s*[:×x]\s*9|4\s*[:×x]\s*3)/);
+    if (rm) return { t: "frame", ratio: rm[1].replace(/[\s×x]/g, "").replace(":", ":") };
+    if (/(dikey|portre|story|reels|tiktok)/.test(text) && /(yap|çevir|oran|format|boyut)/.test(text)) return { t: "frame", ratio: "9:16" };
+    if (/(yatay|landscape)/.test(text) && /(yap|çevir|oran|format|boyut)/.test(text)) return { t: "frame", ratio: "16:9" };
+    if (/(kare|square)/.test(text) && /(yap|çevir|oran|format|boyut)/.test(text)) return { t: "frame", ratio: "1:1" };
+  }
   if (/(kayan yazı|akan yazı|ticker|yazı takibi)/.test(text)) {
     const m = raw.match(/[:\-–]\s*(.+)$/);
     return { t: "ticker", text: m ? m[1].trim() : "FRAMEFORGE PRO" };
@@ -583,6 +591,13 @@ export async function executeCommand(raw: string, ctx: AICtx): Promise<void> {
     case "autoSfx":
       await runAutoSfx(ctx);
       break;
+    case "frame": {
+      const fr = ratioToFrame(intent.ratio);
+      ctx.dispatch({ type: "SET_FRAME", frame: fr });
+      ctx.log("ok", `Çerçeve ${fr.ratio} olarak ayarlandı (${fr.w}×${fr.h})`);
+      ctx.toast(`Çerçeve ${fr.ratio}`);
+      break;
+    }
     case "ticker": {
       const s = ctx.getState();
       const total = seqDuration(s.clips);

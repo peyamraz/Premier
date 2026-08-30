@@ -13,16 +13,20 @@ import { SFX_META, SFX_TYPES, previewSfx } from "./sfx";
 import {
   ANIMS,
   EASINGS,
+  FIT_LABEL,
   FPS,
+  RATIOS,
   clipDur,
   cumStart,
   findClipAt,
   fmtShort,
   fmtTC,
   makeLayer,
+  ratioToFrame,
   uid,
   type AnimType,
   type Easing,
+  type FitMode,
   type MediaItem,
 } from "./model";
 import { useEditor } from "./state";
@@ -259,6 +263,178 @@ function AnalysisPanel({ an, name }: { an: import("./analysis").AnalysisResult; 
   );
 }
 
+/* ================================================================== */
+/* Çerçeve / Oran + Sığdırma                                           */
+/* ================================================================== */
+
+function RatioBox({ w, h, active }: { w: number; h: number; active: boolean }) {
+  const max = 22;
+  const scale = max / Math.max(w, h);
+  return (
+    <span
+      className={`inline-block rounded-[2px] border transition-colors ${
+        active ? "border-amb bg-amb/25" : "border-line2 bg-panel2"
+      }`}
+      style={{ width: w * scale, height: h * scale }}
+    />
+  );
+}
+
+function FramePanel() {
+  const { state, dispatch, toast } = useEditor();
+  const [cw, setCw] = useState(state.frame.w);
+  const [ch, setCh] = useState(state.frame.h);
+  const selClip = state.clips.find((c) => c.id === state.selClip) ?? null;
+
+  const setRatio = (id: string) => {
+    const fr = ratioToFrame(id);
+    dispatch({ type: "SET_FRAME", frame: fr });
+    setCw(fr.w);
+    setCh(fr.h);
+    toast(`Çerçeve ${id} (${fr.w}×${fr.h})`);
+  };
+
+  const applyCustom = () => {
+    const w = Math.max(64, Math.min(7680, Math.round(cw) || 1920));
+    const h = Math.max(64, Math.min(7680, Math.round(ch) || 1080));
+    dispatch({ type: "SET_FRAME", frame: { ratio: `${w}:${h}`, w, h } });
+    toast(`Özel çerçeve ${w}×${h}`);
+  };
+
+  const fit = (mode: FitMode) => dispatch({ type: "SET_FIT_MODE", mode });
+
+  const patchSel = (patch: { scale?: number; tx?: number; ty?: number; fit?: FitMode }) => {
+    if (selClip) dispatch({ type: "CLIP_TRANSFORM", id: selClip.id, patch });
+  };
+
+  return (
+    <section>
+      <p className={`${sectionTitle} mb-2`}>Çerçeve & Oran</p>
+      <div className="space-y-2.5 rounded-[4px] border border-line bg-panel p-3">
+        {/* oran hazır ayarları */}
+        <div className="grid grid-cols-3 gap-1.5">
+          {RATIOS.map((r) => (
+            <button
+              key={r.id}
+              onClick={() => setRatio(r.id)}
+              title={`${r.tag} — ${r.w}×${r.h}`}
+              className={`group flex flex-col items-center gap-1 rounded-[4px] border px-1.5 py-2 transition-all ${
+                state.frame.ratio === r.id
+                  ? "border-amb bg-amb/10"
+                  : "border-line bg-bg0 hover:border-line2 hover:bg-panel2"
+              }`}
+            >
+              <RatioBox w={r.w} h={r.h} active={state.frame.ratio === r.id} />
+              <span
+                className={`font-mono text-[10px] font-semibold ${
+                  state.frame.ratio === r.id ? "text-amb" : "text-mut group-hover:text-ink"
+                }`}
+              >
+                {r.id}
+              </span>
+              <span className="font-mono text-[8px] leading-none text-dim">{r.tag}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* özel boyut */}
+        <div className="flex items-center gap-1.5">
+          <input
+            value={cw}
+            onChange={(e) => setCw(Number(e.target.value) || 0)}
+            className="h-7 w-0 min-w-0 flex-1 rounded-[3px] border border-line bg-bg0 px-2 text-center font-mono text-[11px] text-ink outline-none focus:border-amb/60"
+            aria-label="Genişlik"
+          />
+          <span className="font-mono text-[10px] text-dim">×</span>
+          <input
+            value={ch}
+            onChange={(e) => setCh(Number(e.target.value) || 0)}
+            className="h-7 w-0 min-w-0 flex-1 rounded-[3px] border border-line bg-bg0 px-2 text-center font-mono text-[11px] text-ink outline-none focus:border-amb/60"
+            aria-label="Yükseklik"
+          />
+          <button
+            onClick={applyCustom}
+            className="h-7 rounded-[3px] border border-line px-2.5 font-mono text-[10px] text-mut transition-colors hover:border-amb/60 hover:text-amb"
+          >
+            UYGULA
+          </button>
+        </div>
+
+        {/* sığdırma modu */}
+        <div>
+          <p className="mb-1.5 font-mono text-[9px] tracking-[0.18em] text-dim">SIĞDIRMA</p>
+          <div className="grid grid-cols-3 gap-1.5">
+            {(Object.keys(FIT_LABEL) as FitMode[]).map((m) => (
+              <button
+                key={m}
+                onClick={() => fit(m)}
+                title={m === "cover" ? "Çerçeveyi doldur, taşanı kes" : m === "contain" ? "Tamamını göster, kenar boşluk bırak" : "Çerçeveye göre ger"}
+                className={`rounded-[3px] border py-1.5 font-mono text-[10px] transition-colors ${
+                  state.fitMode === m
+                    ? "border-scope bg-scope/12 text-scope"
+                    : "border-line text-mut hover:border-line2 hover:text-ink"
+                }`}
+              >
+                {FIT_LABEL[m]}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* seçili klip konum/ölçek */}
+        <div className="border-t border-line pt-2.5">
+          <div className="mb-1.5 flex items-center justify-between">
+            <p className="font-mono text-[9px] tracking-[0.18em] text-dim">KLİP KONUM & ÖLÇEK</p>
+            {selClip && (
+              <button
+                onClick={() => {
+                  dispatch({ type: "RESET_TRANSFORM", id: selClip.id });
+                  toast("Klip dönüşümü sıfırlandı");
+                }}
+                className="font-mono text-[8.5px] tracking-wider text-dim transition-colors hover:text-rec"
+              >
+                SIFIRLA
+              </button>
+            )}
+          </div>
+          {selClip ? (
+            <div className="space-y-2">
+              <Slider
+                label="ÖLÇEK"
+                value={selClip.scale ?? 100}
+                min={50}
+                max={250}
+                unit="%"
+                onChange={(v) => patchSel({ scale: v })}
+              />
+              <Slider
+                label="YATAY"
+                value={selClip.tx ?? 0}
+                min={-50}
+                max={50}
+                unit="%"
+                onChange={(v) => patchSel({ tx: v })}
+              />
+              <Slider
+                label="DİKEY"
+                value={selClip.ty ?? 0}
+                min={-50}
+                max={50}
+                unit="%"
+                onChange={(v) => patchSel({ ty: v })}
+              />
+            </div>
+          ) : (
+            <p className="font-mono text-[9.5px] leading-relaxed text-dim">
+              Konum/ölçek için zaman çizelgesinde bir klip seçin.
+            </p>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function Inspector() {
   const { state, dispatch, seek, seqPos, splitAtPlayhead, setInAtPlayhead, setOutAtPlayhead, toast } = useEditor();
   const selClip = state.clips.find((c) => c.id === state.selClip) ?? null;
@@ -326,6 +502,9 @@ export function Inspector() {
         {!selMedia && state.media.length > 0 && Object.keys(state.analysis).length > 0 && (
           <AnalysisPanel an={Object.values(state.analysis)[0]} name={state.media.find((m) => m.id === Object.values(state.analysis)[0].mediaId)?.name ?? ""} />
         )}
+
+        {/* çerçeve & oran */}
+        <FramePanel />
 
         {/* görünüm */}
         <section>

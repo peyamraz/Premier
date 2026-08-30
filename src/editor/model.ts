@@ -13,11 +13,51 @@ export interface MediaItem {
   thumb?: string;
 }
 
+export type FitMode = "cover" | "contain" | "stretch";
+
+export const FIT_LABEL: Record<FitMode, string> = {
+  cover: "Doldur",
+  contain: "Sığdır",
+  stretch: "Ger",
+};
+
 export interface Clip {
   id: string;
   mediaId: string;
   in: number; // saniye
   out: number; // saniye
+  fit?: FitMode; // çerçeve uyumu (yoksa global)
+  scale?: number; // % (100 = normal)
+  tx?: number; // % yatay kaydırma (-50..50)
+  ty?: number; // % dikey kaydırma
+}
+
+export interface FrameSpec {
+  ratio: string; // "16:9" | "9:16" | ... | "custom"
+  w: number;
+  h: number;
+}
+
+export const RATIOS: { id: string; w: number; h: number; tag: string }[] = [
+  { id: "16:9", w: 1920, h: 1080, tag: "Yatay • YouTube" },
+  { id: "9:16", w: 1080, h: 1920, tag: "Dikey • Reels" },
+  { id: "1:1", w: 1080, h: 1080, tag: "Kare • IG" },
+  { id: "4:5", w: 1080, h: 1350, tag: "IG Akış" },
+  { id: "21:9", w: 2560, h: 1080, tag: "Sinema" },
+  { id: "4:3", w: 1440, h: 1080, tag: "Retro" },
+];
+
+export const ratioToFrame = (id: string): FrameSpec => {
+  const r = RATIOS.find((x) => x.id === id);
+  return r ? { ratio: r.id, w: r.w, h: r.h } : { ratio: "16:9", w: 1920, h: 1080 };
+};
+
+/** Oranı koruyarak uzun kenarı hedefe ölçekler (çift sayılara yuvarlar). */
+export function dimsFor(frame: FrameSpec, longEdge: number): { w: number; h: number } {
+  const scale = longEdge / Math.max(frame.w, frame.h);
+  const w = Math.round((frame.w * scale) / 2) * 2;
+  const h = Math.round((frame.h * scale) / 2) * 2;
+  return { w, h };
 }
 
 export interface Caption {

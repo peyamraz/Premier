@@ -48,6 +48,7 @@ export function Monitor({ scanning = false }: { scanning?: boolean }) {
   const [full, setFull] = useState(false);
   const [safe, setSafe] = useState(false);
   const [stageW, setStageW] = useState(960);
+  const [stageH, setStageH] = useState(540);
 
   useEffect(() => {
     const onFs = () => setFull(Boolean(document.fullscreenElement));
@@ -60,7 +61,9 @@ export function Monitor({ scanning = false }: { scanning?: boolean }) {
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect.width;
+      const h = entries[0]?.contentRect.height;
       if (w) setStageW(w);
+      if (h) setStageH(h);
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -160,6 +163,26 @@ export function Monitor({ scanning = false }: { scanning?: boolean }) {
   })();
   const f = state.filters;
 
+  /* çerçeve oranına göre ekrana sığan dikdörtgen */
+  const frameAR = state.frame.w / Math.max(1, state.frame.h);
+  const boxAR = stageW / Math.max(1, stageH);
+  const frameW = frameAR >= boxAR ? stageW : stageH * frameAR;
+  const frameH = frameAR >= boxAR ? stageW / frameAR : stageH;
+
+  /* aktif klibin çerçeve uyumu + konum/ölçek dönüşümü */
+  const fitOf = (mId: string) => {
+    const clip =
+      activeClip && activeClip.mediaId === mId
+        ? activeClip
+        : state.clips.find((c) => c.mediaId === mId);
+    const mode = clip?.fit ?? state.fitMode;
+    const objectFit = mode === "cover" ? "cover" : mode === "contain" ? "contain" : "fill";
+    const scale = (clip?.scale ?? 100) / 100;
+    const tx = clip?.tx ?? 0;
+    const ty = clip?.ty ?? 0;
+    return { objectFit, transform: `translate(${tx}%, ${ty}%) scale(${scale})` } as const;
+  };
+
   const toggleFull = () => {
     const el = boxRef.current;
     if (!el) return;
@@ -184,60 +207,131 @@ export function Monitor({ scanning = false }: { scanning?: boolean }) {
 
       {/* ekran */}
       <div ref={boxRef} className="scanlines vignette relative m-2 flex-1 overflow-hidden rounded-[4px] border border-line bg-black md:m-3">
+        {/* çerçeve — seçilen orana göre ortalanır */}
         <div
-          className="absolute inset-0 transition-[filter] duration-200"
-          style={{
-            filter: filterCSS(f),
-            transform: `rotate(${f.rotate}deg) scale(${f.flipH ? -1 : 1}, ${f.flipV ? -1 : 1})`,
-          }}
+          className="absolute left-1/2 top-1/2 overflow-hidden bg-black shadow-[0_0_0_1px_rgba(255,180,60,.14)]"
+          style={{ width: frameW, height: frameH, transform: "translate(-50%,-50%)" }}
         >
-          {state.media
-            .filter((m) => m.kind === "video")
-            .map((m) => (
-              <video
-                key={m.id}
-                src={m.url}
-                playsInline
-                preload="auto"
-                ref={(el) => {
-                  registerMediaEl(m.id, el);
-                }}
-                onLoadedMetadata={(e) => {
-                  const el = e.currentTarget;
-                  if (Number.isFinite(el.duration)) {
-                    dispatch({
-                      type: "UPDATE_MEDIA",
-                      id: m.id,
-                      patch: { duration: el.duration, width: el.videoWidth || m.width, height: el.videoHeight || m.height },
-                    });
-                  }
-                }}
-                className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-150 ${
-                  activeMedia?.id === m.id ? "opacity-100" : "opacity-0"
-                }`}
-              />
-            ))}
-          {state.media
-            .filter((m) => m.kind === "image")
-            .map((m) => (
-              <img
-                key={m.id}
-                src={m.url}
-                alt=""
-                draggable={false}
-                className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-150 ${
-                  activeMedia?.id === m.id ? "opacity-100" : "opacity-0"
-                }`}
-              />
-            ))}
-        </div>
+          <div
+            className="absolute inset-0 transition-[filter] duration-200"
+            style={{
+              filter: filterCSS(f),
+              transform: `rotate(${f.rotate}deg) scale(${f.flipH ? -1 : 1}, ${f.flipV ? -1 : 1})`,
+            }}
+          >
+            {state.media
+              .filter((m) => m.kind === "video")
+              .map((m) => {
+                const fit = fitOf(m.id);
+                return (
+                  <video
+                    key={m.id}
+                    src={m.url}
+                    playsInline
+                    preload="auto"
+                    ref={(el) => {
+                      registerMediaEl(m.id, el);
+                    }}
+                    onLoadedMetadata={(e) => {
+                      const el = e.currentTarget;
+                      if (Number.isFinite(el.duration)) {
+                        dispatch({
+                          type: "UPDATE_MEDIA",
+                          id: m.id,
+                          patch: { duration: el.duration, width: el.videoWidth || m.width, height: el.videoHeight || m.height },
+                        });
+                      }
+                    }}
+                    style={{ objectFit: fit.objectFit, transform: fit.transform }}
+                    className={`absolute inset-0 h-full w-full transition-opacity duration-150 ${
+                      activeMedia?.id === m.id ? "opacity-100" : "opacity-0"
+                    }`}
+                  />
+                );
+              })}
+            {state.media
+              .filter((m) => m.kind === "image")
+              .map((m) => {
+                const fit = fitOf(m.id);
+                return (
+                  <img
+                    key={m.id}
+                    src={m.url}
+                    alt=""
+                    draggable={false}
+                    style={{ objectFit: fit.objectFit, transform: fit.transform }}
+                    className={`absolute inset-0 h-full w-full transition-opacity duration-150 ${
+                      activeMedia?.id === m.id ? "opacity-100" : "opacity-0"
+                    }`}
+                  />
+                );
+              })}
+          </div>
 
-        {safe && (
-          <>
-            <div className="pointer-events-none absolute inset-[5%] z-[5] border border-dashed border-scope/40" />
-            <div className="pointer-events-none absolute inset-[12.5%] z-[5] border border-dashed border-amb/40" />
-          </>
-        )}
+          {safe && (
+            <>
+              <div className="pointer-events-none absolute inset-[5%] z-[5] border border-dashed border-scope/40" />
+              <div className="pointer-events-none absolute inset-[12.5%] z-[5] border border-dashed border-amb/40" />
+            </>
+          )}
+
+          {caption && (
+            <div className="absolute inset-x-0 bottom-[8%] z-[7] text-center">
+              <span
+                className="rounded-[3px] px-3 py-1.5 text-[14px]"
+                style={{
+                  background: "rgba(0,0,0,.78)",
+                  color:
+                    mood === "action" ? "#ffd48a" : mood === "static" ? "#a9cdff" : "#f2efe6",
+                  fontWeight: mood === "action" ? 700 : 500,
+                  letterSpacing: mood === "action" ? "0.02em" : "0.01em",
+                }}
+              >
+                {caption.text}
+              </span>
+            </div>
+          )}
+
+          {/* hareketli grafik katmanları */}
+          {state.layers.map((L) => {
+            const p = layerPose(L, seqPos);
+            if (!p.visible) return null;
+            const isSel = state.selLayer === L.id;
+            const fsPx = (L.size / 100) * frameW;
+            const shown = L.animIn === "typewriter" ? L.text.slice(0, p.chars) : L.text;
+            return (
+              <button
+                key={L.id}
+                onClick={() => dispatch({ type: "SELECT_LAYER", id: L.id })}
+                title={`${L.name} — tıklayınca seçilir`}
+                className={`absolute z-[6] cursor-pointer whitespace-pre text-left leading-tight transition-shadow ${
+                  isSel ? "ants-frame" : ""
+                }`}
+                style={{
+                  left: `${p.x}%`,
+                  top: `${p.y}%`,
+                  opacity: p.opacity / 100,
+                  transform: `translate(calc(-50% + ${p.jx}px), calc(-50% + ${p.jy}px)) rotate(${p.rot}deg) scale(${p.scale / 100})`,
+                  filter: p.blur > 0.2 ? `blur(${p.blur}px)` : undefined,
+                  clipPath: p.clip < 1 ? `inset(0 ${(1 - p.clip) * 100}% 0 0)` : undefined,
+                  fontSize: fsPx,
+                  color: L.color,
+                  fontFamily: FONT_FAMILIES[L.font],
+                  textTransform: L.upper ? "uppercase" : "none",
+                  letterSpacing: L.font === "display" ? "0.04em" : "0.02em",
+                  background: L.bg || undefined,
+                  padding: L.bg ? "0.22em 0.55em" : "0.06em 0.14em",
+                  textShadow: L.bg ? "none" : "0 2px 14px rgba(0,0,0,.65)",
+                }}
+              >
+                {shown}
+                {L.animIn === "typewriter" && p.chars < L.text.length && (
+                  <span className="blink" style={{ color: L.color }}>▌</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
 
         {scanning && (
           <>
@@ -257,6 +351,12 @@ export function Monitor({ scanning = false }: { scanning?: boolean }) {
               PGM ▸ KLİP {activeIndex + 1}/{state.clips.length}
             </span>
           )}
+          <span
+            className="rounded-[3px] bg-amb/15 px-2 py-1 font-mono text-[10px] font-semibold tracking-[0.12em] text-amb"
+            title={`${state.frame.w}×${state.frame.h} px`}
+          >
+            ⬚ {state.frame.ratio}
+          </span>
         </div>
         <div className="absolute right-3 top-3 z-[7] flex gap-1.5">
           <button
@@ -268,63 +368,6 @@ export function Monitor({ scanning = false }: { scanning?: boolean }) {
             GÜVENLİ ALAN
           </button>
         </div>
-
-        {caption && (
-          <div className="absolute inset-x-0 bottom-10 z-[7] text-center">
-            <span
-              className="rounded-[3px] px-3 py-1.5 text-[14px]"
-              style={{
-                background: "rgba(0,0,0,.78)",
-                color:
-                  mood === "action" ? "#ffd48a" : mood === "static" ? "#a9cdff" : "#f2efe6",
-                fontWeight: mood === "action" ? 700 : 500,
-                letterSpacing: mood === "action" ? "0.02em" : "0.01em",
-              }}
-            >
-              {caption.text}
-            </span>
-          </div>
-        )}
-
-        {/* hareketli grafik katmanları */}
-        {state.layers.map((L) => {
-          const p = layerPose(L, seqPos);
-          if (!p.visible) return null;
-          const isSel = state.selLayer === L.id;
-          const fsPx = (L.size / 100) * stageW;
-          const shown = L.animIn === "typewriter" ? L.text.slice(0, p.chars) : L.text;
-          return (
-            <button
-              key={L.id}
-              onClick={() => dispatch({ type: "SELECT_LAYER", id: L.id })}
-              title={`${L.name} — tıklayınca seçilir`}
-              className={`absolute z-[6] cursor-pointer whitespace-pre text-left leading-tight transition-shadow ${
-                isSel ? "ants-frame" : ""
-              }`}
-              style={{
-                left: `${p.x}%`,
-                top: `${p.y}%`,
-                opacity: p.opacity / 100,
-                transform: `translate(calc(-50% + ${p.jx}px), calc(-50% + ${p.jy}px)) rotate(${p.rot}deg) scale(${p.scale / 100})`,
-                filter: p.blur > 0.2 ? `blur(${p.blur}px)` : undefined,
-                clipPath: p.clip < 1 ? `inset(0 ${(1 - p.clip) * 100}% 0 0)` : undefined,
-                fontSize: fsPx,
-                color: L.color,
-                fontFamily: FONT_FAMILIES[L.font],
-                textTransform: L.upper ? "uppercase" : "none",
-                letterSpacing: L.font === "display" ? "0.04em" : "0.02em",
-                background: L.bg || undefined,
-                padding: L.bg ? "0.22em 0.55em" : "0.06em 0.14em",
-                textShadow: L.bg ? "none" : "0 2px 14px rgba(0,0,0,.65)",
-              }}
-            >
-              {shown}
-              {L.animIn === "typewriter" && p.chars < L.text.length && (
-                <span className="blink" style={{ color: L.color }}>▌</span>
-              )}
-            </button>
-          );
-        })}
 
         {totalDur === 0 && (
           <div className="absolute inset-0 z-[7] flex flex-col items-center justify-center gap-2 text-center">

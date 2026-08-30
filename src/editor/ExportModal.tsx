@@ -1,18 +1,11 @@
 import { useRef, useState } from "react";
 import { Icon } from "../lib/ui";
-import { FONT_FAMILIES, clipDur, filterCSS, findClipAt, fmtShort, layerPose, seqDuration } from "./model";
+import { FONT_FAMILIES, clipDur, dimsFor, filterCSS, findClipAt, fmtShort, layerPose, seqDuration, type FitMode } from "./model";
 import { getSfxUrl } from "./sfx";
 import { useEditor } from "./state";
 
 type Stage = "setup" | "render" | "done";
 type ResKey = "src" | "1080" | "720" | "480";
-
-const RES: Record<ResKey, { label: string; w: number; h: number }> = {
-  src: { label: "KAYNAK", w: 0, h: 0 },
-  "1080": { label: "1080p", w: 1920, h: 1080 },
-  "720": { label: "720p", w: 1280, h: 720 },
-  "480": { label: "480p", w: 854, h: 480 },
-};
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 
@@ -60,17 +53,11 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
     setProgress(0);
     setResult(null);
 
-    /* boyut */
-    let W = 1280;
-    let H = 720;
-    if (res === "src" && firstMedia) {
-      const scale = Math.min(1, 1920 / Math.max(1, firstMedia.width));
-      W = Math.round((firstMedia.width * scale) / 2) * 2;
-      H = Math.round((firstMedia.height * scale) / 2) * 2;
-    } else if (res !== "src") {
-      W = RES[res].w;
-      H = RES[res].h;
-    }
+    /* boyut — seçilen çerçeve oranı korunur */
+    const longEdge = res === "src" ? Math.max(state.frame.w, state.frame.h) : res === "1080" ? 1920 : res === "720" ? 1280 : 854;
+    const d = dimsFor(state.frame, Math.min(longEdge, 3840));
+    const W = d.w;
+    const H = d.h;
 
     const canvas = document.createElement("canvas");
     canvas.width = W;
@@ -143,17 +130,24 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
       rec.onstop = () => resolve();
     });
 
-    const draw = (srcEl: CanvasImageSource, sw: number, sh: number) => {
+    const draw = (srcEl: CanvasImageSource, sw: number, sh: number, clipFit?: FitMode, clipScale = 100, clipTx = 0, clipTy = 0) => {
       ctx.save();
       ctx.fillStyle = "#000";
       ctx.fillRect(0, 0, W, H);
-      ctx.translate(W / 2, H / 2);
+      ctx.translate(W / 2 + (clipTx / 100) * W, H / 2 + (clipTy / 100) * H);
       ctx.rotate((f.rotate * Math.PI) / 180);
       ctx.scale(f.flipH ? -1 : 1, f.flipV ? -1 : 1);
       ctx.filter = filterCSS(f);
-      const sc = Math.max(W / Math.max(1, sw), H / Math.max(1, sh));
-      const w = sw * sc;
-      const h = sh * sc;
+      const mode = clipFit ?? state.fitMode;
+      const sc =
+        mode === "contain"
+          ? Math.min(W / Math.max(1, sw), H / Math.max(1, sh))
+          : mode === "stretch"
+            ? NaN
+            : Math.max(W / Math.max(1, sw), H / Math.max(1, sh));
+      const k = clipScale / 100;
+      const w = (Number.isNaN(sc) ? W : sw * sc) * k;
+      const h = (Number.isNaN(sc) ? H : sh * sc) * k;
       ctx.drawImage(srcEl, -w / 2, -h / 2, w, h);
       ctx.restore();
     };
@@ -287,7 +281,16 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
         void el.play().catch(() => {});
         await frameLoop(
           () => el.ended || el.currentTime >= clip.out - 0.04,
-          () => draw(el, el.videoWidth || media.width, el.videoHeight || media.height),
+          () =>
+            draw(
+              el,
+              el.videoWidth || media.width,
+              el.videoHeight || media.height,
+              clip.fit,
+              clip.scale ?? 100,
+              clip.tx ?? 0,
+              clip.ty ?? 0,
+            ),
         );
         el.pause();
       } else {
@@ -297,7 +300,7 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
         const start = performance.now();
         await frameLoop(
           () => (performance.now() - start) / 1000 >= dur,
-          () => draw(img, media.width, media.height),
+          () => draw(img, media.width, media.height, clip.fit, clip.scale ?? 100, clip.tx ?? 0, clip.ty ?? 0),
         );
       }
     }
@@ -346,19 +349,25 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
         {stage === "setup" && (
           <div className="space-y-4 p-4">
             <div>
-              <p className="mb-1.5 font-mono text-[10px] tracking-[0.2em] text-dim">ÇÖZÜNÜRLÜK</p>
+              <p className="mb-1.5 font-mono text-[10px] tracking-[0.2em] text-dim">
+                ÇÖZÜNÜRLÜK <span className="text-amb">• {state.frame.ratio}</span>
+              </p>
               <div className="grid grid-cols-4 gap-1.5">
-                {(Object.keys(RES) as ResKey[]).map((k) => (
-                  <button
-                    key={k}
-                    onClick={() => setRes(k)}
-                    className={`rounded-[3px] border py-2 font-mono text-[11px] transition-all ${
-                      res === k ? "border-amb bg-amb/12 text-amb" : "border-line text-mut hover:border-line2 hover:text-ink"
-                    }`}
-                  >
-                    {RES[k].label}
-                  </button>
-                ))}
+                {(["src", "1080", "720", "480"] as ResKey[]).map((k) => {
+                  const long = k === "src" ? Math.max(state.frame.w, state.frame.h) : k === "1080" ? 1920 : k === "720" ? 1280 : 854;
+                  const dd = dimsFor(state.frame, Math.min(long, 3840));
+                  return (
+                    <button
+                      key={k}
+                      onClick={() => setRes(k)}
+                      className={`rounded-[3px] border py-2 font-mono text-[11px] transition-all ${
+                        res === k ? "border-amb bg-amb/12 text-amb" : "border-line text-mut hover:border-line2 hover:text-ink"
+                      }`}
+                    >
+                      {dd.w}×{dd.h}
+                    </button>
+                  );
+                })}
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -412,7 +421,18 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
               <div className="h-full rounded-full bg-gradient-to-r from-amb2 to-amb transition-[width] duration-200" style={{ width: `${progress * 100}%` }} />
             </div>
             <div className="flex justify-between font-mono text-[9.5px] tracking-wider text-dim">
-              <span>VP9 • 30 FPS • {RES[res].label}</span>
+              <span>
+                VP9 • 30 FPS •{" "}
+                {dimsFor(
+                  state.frame,
+                  Math.min(res === "src" ? Math.max(state.frame.w, state.frame.h) : res === "1080" ? 1920 : res === "720" ? 1280 : 854, 3840),
+                ).w}
+                ×
+                {dimsFor(
+                  state.frame,
+                  Math.min(res === "src" ? Math.max(state.frame.w, state.frame.h) : res === "1080" ? 1920 : res === "720" ? 1280 : 854, 3840),
+                ).h}
+              </span>
               <span>SEKMENİZİ AÇIK TUTUN</span>
             </div>
             <button

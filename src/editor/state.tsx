@@ -17,11 +17,14 @@ import {
   clipDur,
   cumStart,
   findClipAt,
+  ratioToFrame,
   seqDuration,
   uid,
   type Caption,
   type Clip,
   type Filters,
+  type FitMode,
+  type FrameSpec,
   type MediaItem,
   type MotionLayer,
 } from "./model";
@@ -48,6 +51,8 @@ export interface ProjectState {
   layers: MotionLayer[];
   sfx: SFXItem[];
   music: { url: string; title: string; artist: string; volume: number } | null;
+  frame: FrameSpec;
+  fitMode: FitMode;
   analysis: AnalysisMap;
   filters: Filters;
   volume: number;
@@ -74,6 +79,11 @@ export type Action =
   | { type: "SET_ANALYSIS_ENTRY"; mediaId: string; result: AnalysisResult }
   | { type: "CLEAR_ANALYSIS" }
   | { type: "SET_CLIPS"; clips: Clip[] }
+  | { type: "SET_FRAME"; frame: FrameSpec }
+  | { type: "SET_FIT_MODE"; mode: FitMode }
+  | { type: "CLIP_TRANSFORM"; id: string; patch: Partial<Pick<Clip, "fit" | "scale" | "tx" | "ty">> }
+  | { type: "FIT_ALL"; mode: FitMode }
+  | { type: "RESET_TRANSFORM"; id: string }
   | { type: "SET_MUSIC"; music: ProjectState["music"] }
   | { type: "ADD_SFX"; item: SFXItem }
   | { type: "REMOVE_SFX"; id: string }
@@ -168,6 +178,28 @@ function reducer(s: ProjectState, a: Action): ProjectState {
       };
     case "SELECT_CAPTION":
       return { ...s, selCaption: a.id, selClip: a.id ? null : s.selClip };
+    case "SET_FRAME":
+      return { ...s, frame: a.frame };
+    case "SET_FIT_MODE":
+      return { ...s, fitMode: a.mode };
+    case "CLIP_TRANSFORM":
+      return {
+        ...s,
+        clips: s.clips.map((c) => (c.id === a.id ? { ...c, ...a.patch } : c)),
+      };
+    case "FIT_ALL":
+      return {
+        ...s,
+        fitMode: a.mode,
+        clips: s.clips.map((c) => ({ ...c, fit: a.mode })),
+      };
+    case "RESET_TRANSFORM":
+      return {
+        ...s,
+        clips: s.clips.map((c) =>
+          c.id === a.id ? { ...c, fit: undefined, scale: undefined, tx: undefined, ty: undefined } : c,
+        ),
+      };
     case "SET_MUSIC":
       return { ...s, music: a.music };
     case "SET_CLIPS":
@@ -242,6 +274,8 @@ function reducer(s: ProjectState, a: Action): ProjectState {
         layers: [],
         sfx: [],
         music: null,
+        frame: ratioToFrame("16:9"),
+        fitMode: "cover" as FitMode,
         analysis: {},
         selClip: null,
         selCaption: null,
@@ -260,6 +294,8 @@ const INITIAL: ProjectState = {
   layers: [],
   sfx: [],
   music: null,
+  frame: ratioToFrame("16:9"),
+  fitMode: "cover" as FitMode,
   analysis: {},
   filters: DEFAULT_FILTERS,
   volume: 0.9,
