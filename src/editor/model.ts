@@ -77,6 +77,34 @@ export interface Filters {
   flipV: boolean;
 }
 
+/* ------------------------------------------------------------------ */
+/* video efektleri (VFX)                                               */
+/* ------------------------------------------------------------------ */
+
+export type VFX = "vhs" | "grain" | "vignette" | "chroma" | "glow" | "flicker";
+
+export const VFX_LIST: VFX[] = ["vhs", "grain", "vignette", "chroma", "glow", "flicker"];
+
+export const VFX_META: Record<VFX, { label: string; desc: string }> = {
+  vhs: { label: "VHS", desc: "Tarama çizgileri + iz bandı + sinyal titremesi" },
+  grain: { label: "GREN", desc: "35mm film kumlanması" },
+  vignette: { label: "VİNYET", desc: "Köşelerden kararan odak" },
+  chroma: { label: "RGB AYRIŞMA", desc: "Kırmızı/mavi kanal kayması" },
+  glow: { label: "PARLAMA", desc: "Yumuşak bloom ışığı" },
+  flicker: { label: "TİTREME", desc: "Projektör ışığı dalgalanması" },
+};
+
+export type EffectsState = Record<VFX, boolean>;
+
+export const NO_EFFECTS: EffectsState = {
+  vhs: false,
+  grain: false,
+  vignette: false,
+  chroma: false,
+  glow: false,
+  flicker: false,
+};
+
 export const DEFAULT_FILTERS: Filters = {
   brightness: 100,
   contrast: 100,

@@ -54,6 +54,7 @@ export interface ProjectState {
   frame: FrameSpec;
   fitMode: FitMode;
   analysis: AnalysisMap;
+  effects: EffectsState;
   filters: Filters;
   volume: number;
   muted: boolean;
