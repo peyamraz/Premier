@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { Icon } from "../lib/ui";
-import { FONT_FAMILIES, clipDur, dimsFor, filterCSS, findClipAt, fmtShort, layerPose, seqDuration, type FitMode } from "./model";
+import { CAPTION_STYLES, FONT_FAMILIES, clipDur, dimsFor, filterCSS, fmtShort, layerPose, seqDuration, type FitMode } from "./model";
 import { getSfxUrl } from "./sfx";
 import { useEditor } from "./state";
 
@@ -155,22 +155,34 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
     const drawCaption = (t: number) => {
       const cap = state.captions.find((c) => t >= c.start && t < c.end);
       if (!cap || !cap.text.trim()) return;
-      const fs = Math.max(14, Math.round(H * 0.05));
-      ctx.font = `600 ${fs}px "IBM Plex Sans", sans-serif`;
-      const tw = ctx.measureText(cap.text).width;
-      ctx.fillStyle = "rgba(0,0,0,.66)";
-      const bx = W / 2 - tw / 2 - fs * 0.6;
-      const by = H - fs * 2.5;
-      ctx.fillRect(bx, by, tw + fs * 1.2, fs * 1.7);
-      const fc = findClipAt(state.clips, t);
-      const an = fc ? state.analysis[fc.clip.mediaId] : undefined;
-      const sg = an
-        ? an.segments.find((x) => fc!.clip.in + fc!.local >= x.start && fc!.clip.in + fc!.local < x.end)
-        : undefined;
-      ctx.fillStyle = sg?.type === "action" ? "#ffd48a" : sg?.type === "static" ? "#a9cdff" : "#f2efe6";
-      ctx.font = `${sg?.type === "action" ? 700 : 500} ${fs}px "IBM Plex Sans", sans-serif`;
+      const st = CAPTION_STYLES[state.captionStyle] ?? CAPTION_STYLES.klasik;
+      const fs = Math.max(13, Math.round(H * 0.046));
+      const family =
+        st.font === "display"
+          ? '"Bebas Neue", sans-serif'
+          : st.font === "mono"
+            ? '"IBM Plex Mono", monospace'
+            : st.font === "serif"
+              ? 'Georgia, serif'
+              : '"IBM Plex Sans", sans-serif';
+      let text = st.upper ? cap.text.toLocaleUpperCase("tr-TR") : cap.text;
+      text = text.trim();
+      ctx.font = `${st.weight} ${fs}px ${family}`;
       ctx.textBaseline = "middle";
-      ctx.fillText(cap.text, W / 2 - tw / 2, by + fs * 0.85);
+      const tw = ctx.measureText(text).width;
+      const by = H - fs * 2.4;
+      if (st.box && st.bg !== "transparent") {
+        ctx.fillStyle = st.bg;
+        ctx.fillRect(W / 2 - tw / 2 - fs * 0.6, by, tw + fs * 1.2, fs * 1.7);
+      }
+      ctx.fillStyle = st.fg;
+      if (st.outline) {
+        ctx.lineWidth = Math.max(2, fs * 0.12);
+        ctx.strokeStyle = "rgba(0,0,0,.9)";
+        ctx.lineJoin = "round";
+        ctx.strokeText(text, W / 2 - tw / 2, by + fs * 0.85);
+      }
+      ctx.fillText(text, W / 2 - tw / 2, by + fs * 0.85);
     };
 
     const drawLayers = (t: number) => {

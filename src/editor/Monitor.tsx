@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon, usePrefersReducedMotion } from "../lib/ui";
-import { FONT_FAMILIES, cumStart, filterCSS, findClipAt, fmtTC, layerPose } from "./model";
+import { CAPTION_STYLES, FONT_FAMILIES, cumStart, filterCSS, findClipAt, fmtTC, layerPose, type EffectsState } from "./model";
 import { getSfxUrl } from "./sfx";
 import { useEditor } from "./state";
 
@@ -23,6 +23,46 @@ function VuMeter({ level, label }: { level: number; label: string }) {
       </div>
       <span className="ml-1 font-mono text-[9px] text-dim">{label}</span>
     </div>
+  );
+}
+
+/* video efekti katmanları */
+const GRAIN_URL =
+  "image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='120' height='120' filter='url(%23g)'/></svg>";
+
+function VfxOverlay({ fx }: { fx: EffectsState }) {
+  return (
+    <>
+      {fx.vignette && (
+        <div
+          className="pointer-events-none absolute inset-0 z-[6]"
+          style={{ background: "radial-gradient(115% 90% at 50% 45%, transparent 52%, rgba(0,0,0,.62) 100%)" }}
+        />
+      )}
+      {fx.glow && (
+        <div
+          className="pointer-events-none absolute inset-0 z-[6] mix-blend-screen"
+          style={{ background: "radial-gradient(80% 60% at 50% 38%, rgba(255,214,150,.28), transparent 70%)", filter: "blur(2px)" }}
+        />
+      )}
+      {fx.chroma && (
+        <>
+          <div className="pointer-events-none absolute inset-0 z-[6]" style={{ boxShadow: "inset 3px 0 12px rgba(255,60,90,.5), inset -3px 0 12px rgba(60,200,255,.5)" }} />
+          <div className="pointer-events-none absolute inset-0 z-[6] opacity-25" style={{ background: "linear-gradient(90deg, rgba(255,0,60,.12), transparent 18%, transparent 82%, rgba(0,180,255,.12))" }} />
+        </>
+      )}
+      {fx.grain && (
+        <div className="pointer-events-none absolute inset-0 z-[7] opacity-[0.14] mix-blend-overlay" style={{ backgroundImage: `url("${GRAIN_URL}")` }} />
+      )}
+      {fx.vhs && (
+        <>
+          <div className="pointer-events-none absolute inset-0 z-[7] opacity-60" style={{ background: "repeating-linear-gradient(0deg, rgba(255,255,255,.045) 0 1px, transparent 1px 3px)" }} />
+          <div className="vhs-track pointer-events-none absolute inset-x-0 z-[7] h-10 opacity-25" style={{ background: "linear-gradient(180deg, transparent, rgba(255,255,255,.5), transparent)" }} />
+          <div className="pointer-events-none absolute inset-0 z-[7]" style={{ boxShadow: "inset 0 0 40px rgba(80,120,255,.18)" }} />
+        </>
+      )}
+      {fx.flicker && <div className="vfx-flicker pointer-events-none absolute inset-0 z-[7] bg-black" />}
+    </>
   );
 }
 
@@ -151,8 +191,9 @@ export function Monitor({ scanning = false }: { scanning?: boolean }) {
     ? state.media.find((m) => m.id === activeClip.mediaId)
     : undefined;
   const caption = state.captions.find((c) => seqPos >= c.start && seqPos < c.end);
+  const st = CAPTION_STYLES[state.captionStyle] ?? CAPTION_STYLES.klasik;
 
-  /* aktif sahnenin tipi — altyazı stilini belirler */
+  /* aktif sahnenin tipi — altyazı rengini hafifçe etkiler */
   const mood = (() => {
     const fc = findClipAt(state.clips, seqPos);
     if (!fc) return null;
@@ -275,16 +316,32 @@ export function Monitor({ scanning = false }: { scanning?: boolean }) {
             </>
           )}
 
+          {/* video efektleri (VFX) */}
+          <VfxOverlay fx={state.effects} />
+
           {caption && (
-            <div className="absolute inset-x-0 bottom-[8%] z-[7] text-center">
+            <div className="absolute inset-x-0 bottom-[8%] z-[7] px-4 text-center">
               <span
-                className="rounded-[3px] px-3 py-1.5 text-[14px]"
+                className="inline-block rounded-[3px] px-3 py-1.5"
                 style={{
-                  background: "rgba(0,0,0,.78)",
-                  color:
-                    mood === "action" ? "#ffd48a" : mood === "static" ? "#a9cdff" : "#f2efe6",
-                  fontWeight: mood === "action" ? 700 : 500,
-                  letterSpacing: mood === "action" ? "0.02em" : "0.01em",
+                  borderLeft: mood ? `3px solid ${mood === "action" ? "#ffb43c" : mood === "static" ? "#6fb1ff" : "#3bd6b0"}` : undefined,
+                  fontSize: Math.max(11, frameW * 0.021),
+                  fontFamily:
+                    st.font === "display"
+                      ? "var(--font-display)"
+                      : st.font === "mono"
+                        ? "var(--font-mono)"
+                        : st.font === "serif"
+                          ? "Georgia, 'Times New Roman', serif"
+                          : "var(--font-sans)",
+                  color: st.fg,
+                  background: st.box ? st.bg : "transparent",
+                  fontWeight: st.weight,
+                  textTransform: st.upper ? "uppercase" : "none",
+                  letterSpacing: st.font === "display" ? "0.05em" : "0.01em",
+                  textShadow: st.outline
+                    ? "-1px -1px 0 rgba(0,0,0,.9), 1px -1px 0 rgba(0,0,0,.9), -1px 1px 0 rgba(0,0,0,.9), 1px 1px 0 rgba(0,0,0,.9), 0 2px 8px rgba(0,0,0,.5)"
+                    : undefined,
                 }}
               >
                 {caption.text}

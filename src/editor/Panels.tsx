@@ -10,8 +10,12 @@ import {
 } from "./music";
 import { PROCEDURAL_TRACKS, getProceduralUrl, type ProcKind, type ProcTrack } from "./bgm";
 import { SFX_META, SFX_TYPES, previewSfx } from "./sfx";
+import { dialogFallbackCaptions, mapChunksToSequence, transcribeAudio } from "./transcribe";
+import { downloadSrt, parseSrt } from "./srt";
 import {
   ANIMS,
+  CAPTION_STYLES,
+  CAPTION_STYLE_KEYS,
   EASINGS,
   FIT_LABEL,
   FPS,
@@ -25,6 +29,7 @@ import {
   ratioToFrame,
   uid,
   type AnimType,
+  type Caption,
   type Easing,
   type FitMode,
   type MediaItem,
@@ -552,82 +557,16 @@ export function Inspector() {
         </section>
 
         {/* altyazılar */}
-        <section>
-          <p className={`${sectionTitle} mb-2`}>Altyazılar ({state.captions.length})</p>
-          {state.captions.length === 0 && (
-            <p className="rounded-[4px] border border-dashed border-line px-3 py-4 text-center font-mono text-[10px] leading-relaxed text-dim">
-              ZAMAN ÇİZELGESİ ARAÇ ÇUBUĞUNDAN
-              <br />
-              “ALTYAZI” İLE EKLEYİN
-            </p>
-          )}
-          <div className="space-y-2">
-            {state.captions.map((c) => {
-              const isSel = state.selCaption === c.id;
-              return (
-                <div
-                  key={c.id}
-                  className={`rounded-[4px] border p-2.5 transition-colors ${
-                    isSel ? "border-scope/70 bg-scope/5" : "border-line bg-panel"
-                  }`}
-                  onClick={() => dispatch({ type: "SELECT_CAPTION", id: c.id })}
-                >
-                  <input
-                    value={c.text}
-                    onChange={(e) => dispatch({ type: "UPDATE_CAPTION", id: c.id, patch: { text: e.target.value } })}
-                    className="w-full rounded-[3px] border border-line bg-bg0 px-2 py-1.5 font-sans text-[12px] text-ink outline-none transition-colors focus:border-scope"
-                    placeholder="Altyazı metni…"
-                  />
-                  <div className="mt-2 flex items-center gap-2">
-                    <label className="flex items-center gap-1 font-mono text-[9px] text-dim">
-                      BAŞ
-                      <input
-                        type="number"
-                        step={0.5}
-                        min={0}
-                        value={Math.round(c.start * 10) / 10}
-                        onChange={(e) =>
-                          dispatch({ type: "UPDATE_CAPTION", id: c.id, patch: { start: Math.max(0, Number(e.target.value) || 0) } })
-                        }
-                        className="w-14 rounded-[3px] border border-line bg-bg0 px-1.5 py-1 font-mono text-[10px] tabular-nums text-scope outline-none focus:border-scope"
-                      />
-                    </label>
-                    <label className="flex items-center gap-1 font-mono text-[9px] text-dim">
-                      BİT
-                      <input
-                        type="number"
-                        step={0.5}
-                        min={0}
-                        value={Math.round(c.end * 10) / 10}
-                        onChange={(e) =>
-                          dispatch({ type: "UPDATE_CAPTION", id: c.id, patch: { end: Math.max(c.start + 0.2, Number(e.target.value) || 0) } })
-                        }
-                        className="w-14 rounded-[3px] border border-line bg-bg0 px-1.5 py-1 font-mono text-[10px] tabular-nums text-rec outline-none focus:border-scope"
-                      />
-                    </label>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        dispatch({ type: "REMOVE_CAPTION", id: c.id });
-                        toast("Altyazı silindi");
-                      }}
-                      className="ml-auto flex h-6 w-6 items-center justify-center rounded-[3px] border border-line text-dim transition-colors hover:border-rec hover:text-rec"
-                      title="Altyazıyı sil"
-                    >
-                      <Icon name="trash" className="h-3 w-3" />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
+        <CaptionPanel />
 
         {/* hareketli grafikler */}
         <MotionGraphics />
 
         {/* ses efektleri */}
         <SfxPanel />
+
+        {/* video efektleri */}
+        <EffectsPanel />
 
         {/* stok müzik */}
         <MusicPanel />
@@ -652,6 +591,260 @@ export function Inspector() {
         </section>
       </div>
     </div>
+  );
+}
+
+/* ================================================================== */
+/* Altyazılar — AI çıkarma + SRT içe/dışa + stiller                    */
+/* ================================================================== */
+
+function CaptionPanel() {
+  const { state, dispatch, toast } = useEditor();
+  const [lang, setLang] = useState<string>("tr");
+  const [busy, setBusy] = useState(false);
+  const [prog, setProg] = useState("");
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
+  /* AI ile otomatik çıkarma */
+  const autoExtract = async () => {
+    if (busy) return;
+    const videos = state.media.filter((m) => m.kind === "video");
+    if (!videos.length) {
+      toast("Önce video yükleyin");
+      return;
+    }
+    setBusy(true);
+    setProg("Hazırlanıyor…");
+    try {
+      let total = 0;
+      const all: Caption[] = [];
+      for (const m of videos) {
+        setProg(`Ses çözülüyor — ${m.name}`);
+        const r = await transcribeAudio(m.url, lang === "auto" ? null : lang === "tr" ? "turkish" : "english", (label) => {
+          setProg(label);
+        });
+        if (r && r.chunks.length) {
+          const caps = mapChunksToSequence(r.chunks, state.clips, m.id);
+          all.push(...caps);
+          total += caps.length;
+          setProg(`${m.name}: ${caps.length} altyazı bulundu`);
+        }
+      }
+      if (total > 0) {
+        const merged = [...state.captions, ...all].sort((a, b) => a.start - b.start);
+        dispatch({ type: "SET_CAPTIONS", captions: merged });
+        toast(`${total} altyazı otomatik çıkarıldı`);
+      } else {
+        /* fallback: diyalog zamanlaması */
+        const fb = dialogFallbackCaptions(state.clips, state.analysis);
+        if (fb.length) {
+          dispatch({ type: "SET_CAPTIONS", captions: [...state.captions, ...fb].sort((a, b) => a.start - b.start) });
+          toast(`Konuşma algılanamadı — ${fb.length} zamanlama eklendi (elle yazın)`);
+        } else {
+          toast("Altyazı çıkarılamadı — ses yok ya da model yanıt vermedi");
+        }
+      }
+    } finally {
+      setBusy(false);
+      setProg("");
+    }
+  };
+
+  /* SRT içe aktar */
+  const onSrtFile = (file: File | undefined) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const parsed = parseSrt(String(reader.result ?? ""));
+      if (!parsed.captions.length) {
+        toast("SRT dosyasında altyazı bulunamadı");
+        return;
+      }
+      const merged = [...state.captions, ...parsed.captions].sort((a, b) => a.start - b.start);
+      dispatch({ type: "SET_CAPTIONS", captions: merged });
+      toast(`${parsed.captions.length} altyazı içe aktarıldı${parsed.skipped ? ` (${parsed.skipped} blok atlandı)` : ""}`);
+    };
+    reader.readAsText(file, "utf-8");
+  };
+
+  return (
+    <section>
+      <div className="mb-2 flex items-center justify-between">
+        <p className={sectionTitle}>Altyazılar ({state.captions.length})</p>
+        {state.captions.length > 0 && (
+          <button
+            onClick={() => {
+              dispatch({ type: "SET_CAPTIONS", captions: [] });
+              toast("Tüm altyazılar temizlendi");
+            }}
+            className="font-mono text-[9px] tracking-wider text-dim transition-colors hover:text-rec"
+          >
+            TEMİZLE
+          </button>
+        )}
+      </div>
+
+      {/* araç çubuğu */}
+      <div className="rounded-[4px] border border-amb/35 bg-amb/6 p-2.5">
+        <div className="flex items-center gap-1.5">
+          <select
+            value={lang}
+            onChange={(e) => setLang(e.target.value)}
+            disabled={busy}
+            className="h-7 rounded-[3px] border border-line bg-bg0 px-1.5 font-mono text-[10px] text-ink outline-none focus:border-amb disabled:opacity-40"
+            aria-label="Altyazı dili"
+          >
+            <option value="tr">TR</option>
+            <option value="en">EN</option>
+            <option value="auto">OTO</option>
+          </select>
+          <button
+            onClick={() => void autoExtract()}
+            disabled={busy}
+            className="flex h-7 flex-1 items-center justify-center gap-1.5 rounded-[3px] bg-amb font-mono text-[10px] font-bold tracking-wider text-bg0 transition-all hover:bg-amb2 disabled:opacity-50"
+          >
+            <Icon name="text" className="h-3 w-3" /> AI İLE ÇIKAR
+          </button>
+        </div>
+        {busy && (
+          <p className="mt-1.5 flex items-center gap-1.5 font-mono text-[9px] text-amb">
+            <span className="pulse-dot h-1.5 w-1.5 rounded-full bg-amb" /> {prog || "çalışıyor"}…
+          </p>
+        )}
+        <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+          <button
+            onClick={() => fileRef.current?.click()}
+            className="flex h-7 items-center justify-center gap-1.5 rounded-[3px] border border-line font-mono text-[10px] text-mut transition-colors hover:border-scope/60 hover:text-scope"
+          >
+            <Icon name="download" className="h-3 w-3 rotate-180" /> SRT YÜKLE
+          </button>
+          <button
+            onClick={() => {
+              if (!state.captions.length) {
+                toast("İndirilecek altyazı yok");
+                return;
+              }
+              downloadSrt(state.captions, state.name);
+              toast("SRT dosyası indirildi");
+            }}
+            disabled={!state.captions.length}
+            className="flex h-7 items-center justify-center gap-1.5 rounded-[3px] border border-line font-mono text-[10px] text-mut transition-colors hover:border-scope/60 hover:text-scope disabled:opacity-40"
+          >
+            <Icon name="download" className="h-3 w-3" /> SRT İNDİR
+          </button>
+        </div>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".srt,.txt"
+          className="hidden"
+          onChange={(e) => {
+            onSrtFile(e.target.files?.[0]);
+            e.target.value = "";
+          }}
+        />
+      </div>
+
+      {/* stil seçici */}
+      <div className="mt-2">
+        <p className="mb-1.5 font-mono text-[9px] tracking-[0.18em] text-dim">STİL</p>
+        <div className="grid grid-cols-3 gap-1.5">
+          {CAPTION_STYLE_KEYS.map((k) => {
+            const st = CAPTION_STYLES[k];
+            const active = state.captionStyle === k;
+            return (
+              <button
+                key={k}
+                onClick={() => dispatch({ type: "SET_CAPTION_STYLE", style: k })}
+                className={`rounded-[3px] border px-1 py-1.5 font-mono text-[9px] transition-all ${
+                  active
+                    ? "border-amb bg-amb/12 text-amb"
+                    : "border-line bg-bg0 text-mut hover:border-line2 hover:text-ink"
+                }`}
+                style={active ? undefined : {}}
+              >
+                <span
+                  className="mb-1 block truncate rounded-[2px] px-1 text-[9px] leading-relaxed"
+                  style={{ color: st.fg, background: st.bg === "transparent" ? "#0b0e13" : st.bg, fontWeight: st.weight }}
+                >
+                  Aa
+                </span>
+                {st.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* liste */}
+      {state.captions.length === 0 && !busy && (
+        <p className="mt-2 rounded-[4px] border border-dashed border-line px-3 py-4 text-center font-mono text-[10px] leading-relaxed text-dim">
+          “AI İLE ÇIKAR” KONUŞMAYI YAZIYA ÇEVİRİR
+          <br />
+          YA DA SRT DOSYASI YÜKLEYİN
+        </p>
+      )}
+      <div className="mt-2 space-y-2">
+        {state.captions.map((c) => {
+          const isSel = state.selCaption === c.id;
+          return (
+            <div
+              key={c.id}
+              className={`rounded-[4px] border p-2.5 transition-colors ${
+                isSel ? "border-scope/70 bg-scope/5" : "border-line bg-panel"
+              }`}
+              onClick={() => dispatch({ type: "SELECT_CAPTION", id: c.id })}
+            >
+              <input
+                value={c.text}
+                onChange={(e) => dispatch({ type: "UPDATE_CAPTION", id: c.id, patch: { text: e.target.value } })}
+                className="w-full rounded-[3px] border border-line bg-bg0 px-2 py-1.5 font-sans text-[12px] text-ink outline-none transition-colors focus:border-scope"
+                placeholder="Altyazı metni…"
+              />
+              <div className="mt-2 flex items-center gap-2">
+                <label className="flex items-center gap-1 font-mono text-[9px] text-dim">
+                  BAŞ
+                  <input
+                    type="number"
+                    step={0.5}
+                    min={0}
+                    value={Math.round(c.start * 10) / 10}
+                    onChange={(e) =>
+                      dispatch({ type: "UPDATE_CAPTION", id: c.id, patch: { start: Math.max(0, Number(e.target.value) || 0) } })
+                    }
+                    className="w-14 rounded-[3px] border border-line bg-bg0 px-1.5 py-1 font-mono text-[10px] tabular-nums text-scope outline-none focus:border-scope"
+                  />
+                </label>
+                <label className="flex items-center gap-1 font-mono text-[9px] text-dim">
+                  BİT
+                  <input
+                    type="number"
+                    step={0.5}
+                    min={0}
+                    value={Math.round(c.end * 10) / 10}
+                    onChange={(e) =>
+                      dispatch({ type: "UPDATE_CAPTION", id: c.id, patch: { end: Math.max(c.start + 0.2, Number(e.target.value) || 0) } })
+                    }
+                    className="w-14 rounded-[3px] border border-line bg-bg0 px-1.5 py-1 font-mono text-[10px] tabular-nums text-rec outline-none focus:border-scope"
+                  />
+                </label>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    dispatch({ type: "REMOVE_CAPTION", id: c.id });
+                    toast("Altyazı silindi");
+                  }}
+                  className="ml-auto flex h-6 w-6 items-center justify-center rounded-[3px] border border-line text-dim transition-colors hover:border-rec hover:text-rec"
+                  title="Altyazıyı sil"
+                >
+                  <Icon name="trash" className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

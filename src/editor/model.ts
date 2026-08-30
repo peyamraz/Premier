@@ -65,7 +65,40 @@ export interface Caption {
   start: number;
   end: number;
   text: string;
+  speaker?: string;
 }
+
+/* altyazı stilleri */
+export type CaptionStyleKey = "klasik" | "vurgu" | "soguk" | "kutu" | "kontur" | "sinema";
+
+export interface CaptionStyle {
+  label: string;
+  fg: string;
+  bg: string;
+  font: "sans" | "display" | "mono" | "serif";
+  weight: number;
+  upper: boolean;
+  outline: boolean;
+  box: boolean;
+}
+
+export const CAPTION_STYLE_KEYS: CaptionStyleKey[] = [
+  "klasik",
+  "vurgu",
+  "soguk",
+  "kutu",
+  "kontur",
+  "sinema",
+];
+
+export const CAPTION_STYLES: Record<CaptionStyleKey, CaptionStyle> = {
+  klasik: { label: "Klasik", fg: "#f2efe6", bg: "rgba(0,0,0,.78)", font: "sans", weight: 500, upper: false, outline: false, box: true },
+  vurgu: { label: "Vurgu", fg: "#ffd48a", bg: "rgba(20,12,0,.82)", font: "sans", weight: 700, upper: false, outline: false, box: true },
+  soguk: { label: "Soğuk", fg: "#a9cdff", bg: "rgba(4,10,22,.82)", font: "mono", weight: 500, upper: false, outline: false, box: true },
+  kutu: { label: "Kutu", fg: "#10131a", bg: "#ffb43c", font: "display", weight: 400, upper: true, outline: false, box: true },
+  kontur: { label: "Kontur", fg: "#ffffff", bg: "transparent", font: "sans", weight: 700, upper: false, outline: true, box: false },
+  sinema: { label: "Sinema", fg: "#e8e2d2", bg: "transparent", font: "serif", weight: 400, upper: false, outline: true, box: false },
+};
 
 export interface Filters {
   brightness: number;

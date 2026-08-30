@@ -13,6 +13,7 @@ import {
   DEFAULT_FILTERS,
   FPS,
   MIN_CLIP,
+  NO_EFFECTS,
   clamp,
   clipDur,
   cumStart,
@@ -21,12 +22,15 @@ import {
   seqDuration,
   uid,
   type Caption,
+  type CaptionStyleKey,
   type Clip,
+  type EffectsState,
   type Filters,
   type FitMode,
   type FrameSpec,
   type MediaItem,
   type MotionLayer,
+  type VFX,
 } from "./model";
 import type { AnalysisMap, AnalysisResult } from "./analysis";
 import type { SFXType } from "./sfx";
@@ -55,6 +59,7 @@ export interface ProjectState {
   fitMode: FitMode;
   analysis: AnalysisMap;
   effects: EffectsState;
+  captionStyle: CaptionStyleKey;
   filters: Filters;
   volume: number;
   muted: boolean;
@@ -82,6 +87,10 @@ export type Action =
   | { type: "SET_CLIPS"; clips: Clip[] }
   | { type: "SET_FRAME"; frame: FrameSpec }
   | { type: "SET_FIT_MODE"; mode: FitMode }
+  | { type: "TOGGLE_VFX"; vfx: VFX }
+  | { type: "SET_EFFECTS"; effects: EffectsState }
+  | { type: "SET_CAPTION_STYLE"; style: CaptionStyleKey }
+  | { type: "SET_CAPTIONS"; captions: Caption[] }
   | { type: "CLIP_TRANSFORM"; id: string; patch: Partial<Pick<Clip, "fit" | "scale" | "tx" | "ty">> }
   | { type: "FIT_ALL"; mode: FitMode }
   | { type: "RESET_TRANSFORM"; id: string }
@@ -183,6 +192,14 @@ function reducer(s: ProjectState, a: Action): ProjectState {
       return { ...s, frame: a.frame };
     case "SET_FIT_MODE":
       return { ...s, fitMode: a.mode };
+    case "TOGGLE_VFX":
+      return { ...s, effects: { ...s.effects, [a.vfx]: !s.effects[a.vfx] } };
+    case "SET_EFFECTS":
+      return { ...s, effects: a.effects };
+    case "SET_CAPTION_STYLE":
+      return { ...s, captionStyle: a.style };
+    case "SET_CAPTIONS":
+      return { ...s, captions: a.captions, selCaption: null };
     case "CLIP_TRANSFORM":
       return {
         ...s,
@@ -277,6 +294,8 @@ function reducer(s: ProjectState, a: Action): ProjectState {
         music: null,
         frame: ratioToFrame("16:9"),
         fitMode: "cover" as FitMode,
+        effects: NO_EFFECTS,
+        captionStyle: "klasik" as CaptionStyleKey,
         analysis: {},
         selClip: null,
         selCaption: null,
@@ -297,6 +316,8 @@ const INITIAL: ProjectState = {
   music: null,
   frame: ratioToFrame("16:9"),
   fitMode: "cover" as FitMode,
+  effects: NO_EFFECTS,
+  captionStyle: "klasik" as CaptionStyleKey,
   analysis: {},
   filters: DEFAULT_FILTERS,
   volume: 0.9,

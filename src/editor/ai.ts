@@ -11,12 +11,15 @@ import {
   ratioToFrame,
   seqDuration,
   uid,
+  type Caption,
   type EffectsState,
   type VFX,
 } from "./model";
 import { SFX_META, SFX_TYPES, previewSfx, type SFXType } from "./sfx";
 import { PROCEDURAL_TRACKS, getProceduralUrl, type ProcKind } from "./bgm";
 import { cutSilence, ensureAnalysis, splitScenes } from "./smartcut";
+import { dialogFallbackCaptions, mapChunksToSequence, transcribeAudio } from "./transcribe";
+import { downloadSrt } from "./srt";
 import type { Action, ProjectState, SFXItem } from "./state";
 import { analyzeMedia, TYPE_LABEL, type AnalysisMap, type AnalysisResult } from "./analysis";
 
@@ -111,6 +114,8 @@ type Intent =
   | { t: "smartCut"; kind: "silence" | "scenes" }
   | { t: "bgmProc"; kind: ProcKind }
   | { t: "frame"; ratio: string }
+  | { t: "autoCaptions"; lang: string | null }
+  | { t: "srtExport" }
   | { t: "unknown"; raw: string };
 
 /* ------------------------------------------------------------------ */
@@ -144,6 +149,8 @@ export const SUGGESTIONS: { label: string; cmd: string }[] = [
   { label: "Sessizlik Kes", cmd: "sessizlikleri kes" },
   { label: "Sahne Böl", cmd: "sahnelerden böl" },
   { label: "Dahili Müzik", cmd: "fon müziği: lofi" },
+  { label: "Altyazı Çıkar", cmd: "altyazıları otomatik çıkar" },
+  { label: "SRT İndir", cmd: "altyazıları srt indir" },
   { label: "Otomatik Grafik", cmd: "otomatik grafik" },
   { label: "Otomatik Ses Efekti", cmd: "otomatik ses efekti" },
   { label: "Seslendir", cmd: "altyazıları seslendir" },
@@ -235,7 +242,12 @@ function parse(text: string, raw: string): Intent {
     };
     return { t: "sfxAdd", type: pick() };
   }
-  if (/(altyazı|caption)/.test(text)) {
+  if (/(altyazı|caption|subtitle)/.test(text)) {
+    if (/(çıkar|çıkart|otomatik|transkri|tanı|seslendir.*yazı|konuşmayı)/.test(text)) {
+      const lang = /türkçe|turkce|\btr\b/.test(text) ? "turkish" : /ingilizce|english|\ben\b/.test(text) ? "english" : null;
+      return { t: "autoCaptions", lang };
+    }
+    if (/srt/.test(text) && /(indir|dışa|aktar|kaydet|export)/.test(text)) return { t: "srtExport" };
     const m = raw.match(/[:\-–]\s*(.+)$/);
     if (m) return { t: "captionAdd", text: m[1].trim() };
     if (/(sil|temizle|kaldır)/.test(text)) return { t: "captionClear" };
@@ -609,6 +621,20 @@ export async function executeCommand(raw: string, ctx: AICtx): Promise<void> {
       ctx.dispatch({ type: "SET_FRAME", frame: fr });
       ctx.log("ok", `Çerçeve ${fr.ratio} olarak ayarlandı (${fr.w}×${fr.h})`);
       ctx.toast(`Çerçeve ${fr.ratio}`);
+      break;
+    }
+    case "autoCaptions":
+      await runAutoCaptions(ctx, intent.lang);
+      break;
+    case "srtExport": {
+      const s = ctx.getState();
+      if (!s.captions.length) {
+        ctx.log("warn", "İndirilecek altyazı yok — önce çıkarın ya da ekleyin");
+        break;
+      }
+      downloadSrt(s.captions, s.name);
+      ctx.log("ok", `${s.captions.length} altyazı SRT olarak indirildi`);
+      ctx.toast("SRT indirildi");
       break;
     }
     case "ticker": {
@@ -1358,5 +1384,69 @@ export async function runAutoSfx(ctx: AICtx): Promise<void> {
     } else {
       window.setTimeout(() => ctx.setAgent(null), 2600);
     }
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* otomatik altyazı çıkarma (Whisper)                                  */
+/* ------------------------------------------------------------------ */
+
+export async function runAutoCaptions(ctx: AICtx, lang: string | null): Promise<void> {
+  const s0 = ctx.getState();
+  const videos = s0.media.filter((m) => m.kind === "video");
+  if (!videos.length) {
+    ctx.log("warn", "Önce video yükleyin — altyazı çıkarılacak ses yok");
+    return;
+  }
+  ctx.onScanning(true);
+  ctx.log("ai", `Whisper ile konuşma tanınıyor (${lang ? lang : "otomatik dil"})… İlk çalıştırmada model iner (~40 MB).`);
+  ctx.toast("Altyazı çıkarılıyor…");
+
+  let total = 0;
+  const all: Caption[] = [];
+  try {
+    for (const m of videos) {
+      if (ctx.cancelRef.current) break;
+      ctx.prog(`Ses çözülüyor — ${m.name}`, 4);
+      const r = await transcribeAudio(
+        m.url,
+        lang,
+        (label, pct) => ctx.prog(pct >= 0 ? `${label} %${pct}` : label, Math.max(4, pct)),
+      );
+      if (r && r.chunks.length) {
+        const caps = mapChunksToSequence(r.chunks, ctx.getState().clips, m.id);
+        all.push(...caps);
+        total += caps.length;
+        ctx.log("ok", `${m.name}: ${caps.length} altyazı tanındı`);
+      }
+    }
+    if (ctx.cancelRef.current) {
+      ctx.log("warn", "Altyazı çıkarma iptal edildi");
+      return;
+    }
+    if (total > 0) {
+      const merged = [...ctx.getState().captions, ...all].sort((a, b) => a.start - b.start);
+      ctx.dispatch({ type: "SET_CAPTIONS", captions: merged });
+      ctx.log("ok", `${total} altyazı zaman çizelgesine yerleştirildi`);
+      ctx.toast(`${total} altyazı çıkarıldı`);
+    } else {
+      const fb = dialogFallbackCaptions(ctx.getState().clips, ctx.getState().analysis);
+      if (fb.length) {
+        ctx.dispatch({
+          type: "SET_CAPTIONS",
+          captions: [...ctx.getState().captions, ...fb].sort((a, b) => a.start - b.start),
+        });
+        ctx.log("warn", `Net konuşma bulunamadı — ${fb.length} konuşma zamanlaması eklendi (metinleri elle yazın)`);
+        ctx.toast("Zamanlamalar eklendi");
+      } else {
+        ctx.log("warn", "Altyazı çıkarılamadı — ses yok ya da model yanıt vermedi");
+        ctx.toast("Altyazı çıkarılamadı");
+      }
+    }
+  } catch {
+    ctx.log("warn", "Altyazı çıkarma sırasında bir sorun oluştu");
+  } finally {
+    ctx.onScanning(false);
+    ctx.prog("", 0);
   }
 }

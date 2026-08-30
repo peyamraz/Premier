@@ -206,6 +206,29 @@ input.range-amber::-moz-range-thumb {
   border-radius: 2px;
 }
 
+/* ---------- video efektleri ---------- */
+.vfx-flicker {
+  animation: vfxFlicker 0.9s steps(6, end) infinite;
+  opacity: 0;
+}
+@keyframes vfxFlicker {
+  0%, 100% { opacity: 0; }
+  12% { opacity: 0.16; }
+  24% { opacity: 0.02; }
+  38% { opacity: 0.22; }
+  52% { opacity: 0.05; }
+  70% { opacity: 0.18; }
+  86% { opacity: 0.03; }
+}
+.vhs-track {
+  animation: vhsTrack 3.4s linear infinite;
+  top: -15%;
+}
+@keyframes vhsTrack {
+  from { transform: translateY(0); }
+  to { transform: translateY(1200%); }
+}
+
 /* ---------- azaltılmış hareket ---------- */
 @media (prefers-reduced-motion: reduce) {
   *,
