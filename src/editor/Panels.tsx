@@ -28,13 +28,17 @@ import {
   makeLayer,
   ratioToFrame,
   uid,
+  VFX_LIST,
+  VFX_META,
   type AnimType,
   type Caption,
   type Easing,
   type FitMode,
   type MediaItem,
+  type VFX,
 } from "./model";
 import { useEditor } from "./state";
+import { MagnatesPanel } from "./MagnatesPanel";
 
 const sectionTitle = "font-mono text-[10px] font-semibold uppercase tracking-[0.22em] text-dim";
 const toolBtn =
@@ -440,6 +444,55 @@ function FramePanel() {
   );
 }
 
+/* ================================================================== */
+/* Video efektleri (VFX)                                               */
+/* ================================================================== */
+
+function EffectsPanel() {
+  const { state, dispatch } = useEditor();
+  const activeCount = VFX_LIST.filter((v) => state.effects[v]).length;
+
+  return (
+    <section>
+      <div className="mb-2 flex items-center justify-between">
+        <p className={sectionTitle}>Video Efektleri</p>
+        <span className="font-mono text-[9px] tabular-nums text-amb">{activeCount} aktif</span>
+      </div>
+      <div className="grid grid-cols-2 gap-1.5">
+        {VFX_LIST.map((v: VFX) => {
+          const on = state.effects[v];
+          return (
+            <button
+              key={v}
+              onClick={() => dispatch({ type: "TOGGLE_VFX", vfx: v })}
+              title={VFX_META[v].desc}
+              className={`flex flex-col items-start gap-0.5 rounded-[4px] border px-2.5 py-2 text-left transition-all hover:-translate-y-0.5 ${
+                on
+                  ? "border-amb/60 bg-amb/10 shadow-[0_4px_16px_rgba(255,180,60,.08)]"
+                  : "border-line bg-panel hover:border-line2"
+              }`}
+            >
+              <span
+                className={`font-mono text-[10px] font-semibold tracking-wide ${
+                  on ? "text-amb" : "text-mut"
+                }`}
+              >
+                {VFX_META[v].label}
+              </span>
+              <span className="truncate font-mono text-[8px] text-dim">{VFX_META[v].desc}</span>
+              <span
+                className={`mt-1 h-1 w-6 rounded-full transition-colors ${
+                  on ? "bg-amb" : "bg-line2"
+                }`}
+              />
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 export function Inspector() {
   const { state, dispatch, seek, seqPos, splitAtPlayhead, setInAtPlayhead, setOutAtPlayhead, toast } = useEditor();
   const selClip = state.clips.find((c) => c.id === state.selClip) ?? null;
@@ -455,6 +508,9 @@ export function Inspector() {
       </div>
 
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-3">
+        {/* magnates stil stüdyosu */}
+        <MagnatesPanel />
+
         {/* seçili klip */}
         <section>
           <p className={`${sectionTitle} mb-2`}>Seçili Klip</p>
