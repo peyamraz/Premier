@@ -18,7 +18,7 @@ import {
 import { SFX_META, SFX_TYPES, previewSfx, type SFXType } from "./sfx";
 import { PROCEDURAL_TRACKS, getProceduralUrl, type ProcKind } from "./bgm";
 import { cutSilence, ensureAnalysis, splitScenes } from "./smartcut";
-import { dialogFallbackCaptions, mapChunksToSequence, transcribeAudio } from "./transcribe";
+import { dialogFallbackCaptions, mapChunksToSequence, regroupCaptions, transcribeAudio } from "./transcribe";
 import { downloadSrt } from "./srt";
 import type { Action, ProjectState, SFXItem } from "./state";
 import { analyzeMedia, TYPE_LABEL, type AnalysisMap, type AnalysisResult } from "./analysis";
@@ -116,6 +116,7 @@ type Intent =
   | { t: "frame"; ratio: string }
   | { t: "autoCaptions"; lang: string | null }
   | { t: "srtExport" }
+  | { t: "captionWords"; n: number }
   | { t: "unknown"; raw: string };
 
 /* ------------------------------------------------------------------ */
@@ -151,6 +152,7 @@ export const SUGGESTIONS: { label: string; cmd: string }[] = [
   { label: "Dahili Müzik", cmd: "fon müziği: lofi" },
   { label: "Altyazı Çıkar", cmd: "altyazıları otomatik çıkar" },
   { label: "SRT İndir", cmd: "altyazıları srt indir" },
+  { label: "4 Kelime Böl", cmd: "altyazıları 4 kelime böl" },
   { label: "Otomatik Grafik", cmd: "otomatik grafik" },
   { label: "Otomatik Ses Efekti", cmd: "otomatik ses efekti" },
   { label: "Seslendir", cmd: "altyazıları seslendir" },
@@ -248,6 +250,8 @@ function parse(text: string, raw: string): Intent {
       return { t: "autoCaptions", lang };
     }
     if (/srt/.test(text) && /(indir|dışa|aktar|kaydet|export)/.test(text)) return { t: "srtExport" };
+    const wm = text.match(/(\d{1,2})\s*kelime/);
+    if (wm) return { t: "captionWords", n: Math.min(20, Math.max(1, Number(wm[1]))) };
     const m = raw.match(/[:\-–]\s*(.+)$/);
     if (m) return { t: "captionAdd", text: m[1].trim() };
     if (/(sil|temizle|kaldır)/.test(text)) return { t: "captionClear" };
@@ -635,6 +639,21 @@ export async function executeCommand(raw: string, ctx: AICtx): Promise<void> {
       downloadSrt(s.captions, s.name);
       ctx.log("ok", `${s.captions.length} altyazı SRT olarak indirildi`);
       ctx.toast("SRT indirildi");
+      break;
+    }
+    case "captionWords": {
+      const s = ctx.getState();
+      if (!s.captions.length) {
+        ctx.log("warn", "Bölünecek altyazı yok — önce çıkarın ya da yükleyin");
+        break;
+      }
+      const caps = regroupCaptions(s.captions, intent.n);
+      ctx.dispatch({ type: "SET_CAPTIONS", captions: caps });
+      ctx.log(
+        "ok",
+        `Altyazılar en çok ${intent.n} kelime/satır olarak yeniden bölündü (${s.captions.length} → ${caps.length} satır)`,
+      );
+      ctx.toast(`${caps.length} satıra bölündü`);
       break;
     }
     case "ticker": {

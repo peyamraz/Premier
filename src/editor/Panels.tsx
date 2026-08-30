@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Icon } from "../lib/ui";
 import { TYPE_LABEL } from "./analysis";
 import {
@@ -10,7 +10,7 @@ import {
 } from "./music";
 import { PROCEDURAL_TRACKS, getProceduralUrl, type ProcKind, type ProcTrack } from "./bgm";
 import { SFX_META, SFX_TYPES, previewSfx } from "./sfx";
-import { dialogFallbackCaptions, mapChunksToSequence, transcribeAudio } from "./transcribe";
+import { dialogFallbackCaptions, mapChunksToSequence, regroupCaptions, transcribeAudio } from "./transcribe";
 import { downloadSrt, parseSrt } from "./srt";
 import {
   ANIMS,
@@ -654,12 +654,36 @@ export function Inspector() {
 /* Altyazılar — AI çıkarma + SRT içe/dışa + stiller                    */
 /* ================================================================== */
 
+const WORDS_OPTIONS = [2, 4, 6, 8, 12];
+
 function CaptionPanel() {
   const { state, dispatch, toast } = useEditor();
   const [lang, setLang] = useState<string>("tr");
+  const [wordsPer, setWordsPer] = useState(6);
   const [busy, setBusy] = useState(false);
   const [prog, setProg] = useState("");
   const fileRef = useRef<HTMLInputElement | null>(null);
+
+  /* seçili kelime sayısıyla mevcut altyazıların kaç satıra ineceği (canlı önizleme) */
+  const previewCount = useMemo(
+    () => (state.captions.length ? regroupCaptions(state.captions, wordsPer).length : 0),
+    [state.captions, wordsPer],
+  );
+
+  /* mevcut altyazıları seçili kelime sayısına göre yeniden böl */
+  const regroupNow = () => {
+    if (!state.captions.length) {
+      toast("Bölünecek altyazı yok");
+      return;
+    }
+    const caps = regroupCaptions(state.captions, wordsPer);
+    if (caps.length === state.captions.length) {
+      toast(`Zaten en çok ${wordsPer} kelime/satır`);
+      return;
+    }
+    dispatch({ type: "SET_CAPTIONS", captions: caps });
+    toast(`${state.captions.length} satır → ${caps.length} satır (${wordsPer} kelime/satır)`);
+  };
 
   /* AI ile otomatik çıkarma */
   const autoExtract = async () => {
@@ -680,7 +704,7 @@ function CaptionPanel() {
           setProg(label);
         });
         if (r && r.chunks.length) {
-          const caps = mapChunksToSequence(r.chunks, state.clips, m.id);
+          const caps = mapChunksToSequence(r.chunks, state.clips, m.id, wordsPer);
           all.push(...caps);
           total += caps.length;
           setProg(`${m.name}: ${caps.length} altyazı bulundu`);
@@ -716,9 +740,14 @@ function CaptionPanel() {
         toast("SRT dosyasında altyazı bulunamadı");
         return;
       }
-      const merged = [...state.captions, ...parsed.captions].sort((a, b) => a.start - b.start);
+      const regrouped = regroupCaptions(parsed.captions, wordsPer);
+      const merged = [...state.captions, ...regrouped].sort((a, b) => a.start - b.start);
       dispatch({ type: "SET_CAPTIONS", captions: merged });
-      toast(`${parsed.captions.length} altyazı içe aktarıldı${parsed.skipped ? ` (${parsed.skipped} blok atlandı)` : ""}`);
+      const note =
+        regrouped.length !== parsed.captions.length
+          ? ` — ${wordsPer} kelime/satıra bölündü (${regrouped.length} satır)`
+          : "";
+      toast(`${parsed.captions.length} altyazı içe aktarıldı${note}${parsed.skipped ? ` (${parsed.skipped} blok atlandı)` : ""}`);
     };
     reader.readAsText(file, "utf-8");
   };
@@ -799,6 +828,57 @@ function CaptionPanel() {
             e.target.value = "";
           }}
         />
+
+        {/* satır başına kelime sayısı */}
+        <div className="mt-1.5 rounded-[4px] border border-line bg-bg0/60 p-2">
+          <div className="flex items-center justify-between">
+            <p className="font-mono text-[9px] tracking-[0.18em] text-dim">KELİME / SATIR</p>
+            <p className="font-mono text-[9px] tabular-nums text-mut">
+              {state.captions.length
+                ? `${state.captions.length} → ${previewCount} satır`
+                : "SRT • AI • yeniden böl"}
+            </p>
+          </div>
+          <div className="mt-1.5 flex items-center gap-1.5">
+            <div className="flex flex-1 overflow-hidden rounded-[3px] border border-line">
+              {WORDS_OPTIONS.map((n) => {
+                const active = wordsPer === n;
+                return (
+                  <button
+                    key={n}
+                    onClick={() => setWordsPer(n)}
+                    disabled={busy}
+                    title={`Satır başına en çok ${n} kelime`}
+                    className={`flex-1 py-1.5 font-mono text-[10px] tabular-nums transition-all active:translate-y-px disabled:opacity-40 ${
+                      active
+                        ? "bg-amb font-bold text-bg0 shadow-[inset_0_-2px_0_rgba(0,0,0,.25)]"
+                        : "bg-bg0 text-mut hover:bg-panel hover:text-ink"
+                    }`}
+                  >
+                    {n}
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              onClick={regroupNow}
+              disabled={busy || !state.captions.length}
+              title="Mevcut altyazıları seçili kelime sayısına göre yeniden böler"
+              className="flex h-7 items-center gap-1.5 rounded-[3px] border border-scope/40 px-2 font-mono text-[10px] font-semibold text-scope transition-all hover:bg-scope/10 active:translate-y-px disabled:opacity-40"
+            >
+              <Icon name="scissors" className="h-3 w-3" /> YENİDEN BÖL
+            </button>
+          </div>
+          <p className="mt-1.5 font-mono text-[8.5px] leading-relaxed text-dim">
+            {wordsPer <= 2
+              ? "Kinetik stil — kısa vurgular (TikTok/Shorts)"
+              : wordsPer <= 4
+                ? "Sosyal medya — hızlı okunur, 1–2 satır"
+                : wordsPer <= 6
+                  ? "Standart — YouTube için ideal"
+                  : "Uzun satır — belgesel / röportaj"}
+          </p>
+        </div>
       </div>
 
       {/* stil seçici */}

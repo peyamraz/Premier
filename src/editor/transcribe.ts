@@ -122,6 +122,7 @@ export function mapChunksToSequence(
   chunks: TranscribeChunk[],
   clips: Clip[],
   mediaId: string,
+  wordsPer = 6,
 ): Caption[] {
   const caps: Caption[] = [];
   for (const ch of chunks) {
@@ -138,7 +139,63 @@ export function mapChunksToSequence(
       acc += d;
     }
   }
-  return caps;
+  return wordsPer > 0 ? regroupCaptions(caps, wordsPer) : caps;
+}
+
+/* ------------------------------------------------------------------ */
+/* satır başına kelime sayısına göre yeniden bölme                     */
+/* ------------------------------------------------------------------ */
+
+interface TimedWord {
+  text: string;
+  t: number; // saniye cinsinden başlangıç zamanı (kaynak satırdan enterpolasyon)
+}
+
+/**
+ * Altyazıları satır başına en çok `wordsPer` kelime olacak şekilde yeniden böler.
+ * Zamanlama, kaynak satırın içindeki kelime konumundan enterpole edilir;
+ * cümle sonu noktalama işaretlerinde (. ? ! …) erken kapatılır.
+ */
+export function regroupCaptions(caps: Caption[], wordsPer: number): Caption[] {
+  if (wordsPer < 1) return caps;
+
+  /* 1 — tüm kelimeleri zaman çizelgesine ser */
+  const words: TimedWord[] = [];
+  for (const c of caps) {
+    const parts = c.text.trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) continue;
+    const span = Math.max(0.001, c.end - c.start);
+    parts.forEach((p, i) => {
+      words.push({ text: p, t: c.start + (span * i) / parts.length });
+    });
+  }
+  if (!words.length) return [];
+
+  /* 2 — kelime öbekleri kur */
+  const out: Caption[] = [];
+  let cur: TimedWord[] = [];
+  const flush = (nextT?: number) => {
+    if (!cur.length) return;
+    const start = cur[0].t;
+    const last = cur[cur.length - 1];
+    /* okuma süresi: kelime uzunluğuna göre pay */
+    let end = last.t + Math.max(0.35, (last.text.length + 1) * 0.055);
+    if (nextT !== undefined) end = Math.min(end, nextT - 0.02);
+    if (end <= start) end = start + 0.3;
+    out.push({ id: uid(), start, end, text: cur.map((w) => w.text).join(" ") });
+    cur = [];
+  };
+
+  for (let i = 0; i < words.length; i++) {
+    cur.push(words[i]);
+    const w = words[i];
+    const endsSentence = /[.?!…]["')\]]?$/.test(w.text);
+    const isLast = i === words.length - 1;
+    if (cur.length >= wordsPer || (endsSentence && cur.length >= 2) || isLast) {
+      flush(isLast ? undefined : words[i + 1].t);
+    }
+  }
+  return out;
 }
 
 /** Whisper başarısız olursa analiz verisindeki diyalog bölgelerinden zamanlama üretir. */
