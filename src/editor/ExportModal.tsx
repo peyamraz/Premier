@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { Icon } from "../lib/ui";
-import { FONT_FAMILIES, clipDur, filterCSS, fmtShort, layerPose, seqDuration } from "./model";
+import { FONT_FAMILIES, clipDur, filterCSS, findClipAt, fmtShort, layerPose, seqDuration } from "./model";
+import { getSfxUrl } from "./sfx";
 import { useEditor } from "./state";
 
 type Stage = "setup" | "render" | "done";
@@ -167,7 +168,13 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
       const bx = W / 2 - tw / 2 - fs * 0.6;
       const by = H - fs * 2.5;
       ctx.fillRect(bx, by, tw + fs * 1.2, fs * 1.7);
-      ctx.fillStyle = "#ffffff";
+      const fc = findClipAt(state.clips, t);
+      const an = fc ? state.analysis[fc.clip.mediaId] : undefined;
+      const sg = an
+        ? an.segments.find((x) => fc!.clip.in + fc!.local >= x.start && fc!.clip.in + fc!.local < x.end)
+        : undefined;
+      ctx.fillStyle = sg?.type === "action" ? "#ffd48a" : sg?.type === "static" ? "#a9cdff" : "#f2efe6";
+      ctx.font = `${sg?.type === "action" ? 700 : 500} ${fs}px "IBM Plex Sans", sans-serif`;
       ctx.textBaseline = "middle";
       ctx.fillText(cap.text, W / 2 - tw / 2, by + fs * 0.85);
     };
@@ -212,6 +219,44 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
     };
 
     rec.start(250);
+
+    /* stok müzik + ses efektlerini kayda karıştır */
+    if (actx && dest && !state.muted) {
+      const t0c = actx.currentTime + 0.06;
+      if (state.music) {
+        try {
+          const mb = await (await fetch(state.music.url)).arrayBuffer();
+          const mbuf = await actx.decodeAudioData(mb);
+          const src = actx.createBufferSource();
+          src.buffer = mbuf;
+          src.loop = true;
+          const g = actx.createGain();
+          g.gain.value = state.music.volume;
+          src.connect(g);
+          g.connect(dest);
+          src.start(t0c);
+        } catch {
+          toast("Stok müzik dışa aktarıma eklenemedi (CORS/çözümleme) — video yine de render ediliyor");
+        }
+      }
+      for (const it of state.sfx) {
+        try {
+          const url = await getSfxUrl(it.type);
+          const bb = await (await fetch(url)).arrayBuffer();
+          const bbuf = await actx.decodeAudioData(bb);
+          const src = actx.createBufferSource();
+          src.buffer = bbuf;
+          const g = actx.createGain();
+          g.gain.value = it.volume;
+          src.connect(g);
+          g.connect(dest);
+          src.start(t0c + it.start);
+        } catch {
+          /* efekt çözümlenemedi — sessizce geç */
+        }
+      }
+    }
+
     const t0 = performance.now();
     const elapsed = () => (performance.now() - t0) / 1000;
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon, usePrefersReducedMotion } from "../lib/ui";
-import { FONT_FAMILIES, cumStart, filterCSS, fmtTC, layerPose } from "./model";
+import { FONT_FAMILIES, cumStart, filterCSS, findClipAt, fmtTC, layerPose } from "./model";
 import { getSfxUrl } from "./sfx";
 import { useEditor } from "./state";
 
@@ -109,11 +109,47 @@ export function Monitor({ scanning = false }: { scanning?: boolean }) {
     };
   }, []);
 
+  /* BGM (stok müzik) oynatma */
+  const bgmRef = useRef<HTMLAudioElement | null>(null);
+  useEffect(() => {
+    if (!bgmRef.current) {
+      bgmRef.current = new Audio();
+      bgmRef.current.loop = true;
+    }
+    const el = bgmRef.current;
+    if (state.music) {
+      if (el.src !== state.music.url) {
+        el.src = state.music.url;
+        el.currentTime = 0;
+      }
+      el.volume = state.music.volume * (state.muted ? 0 : 1);
+      if (playing) void el.play().catch(() => {});
+      else el.pause();
+    } else {
+      el.pause();
+      el.removeAttribute("src");
+      el.load();
+    }
+    return () => {
+      el.pause();
+    };
+  }, [state.music, playing, state.muted]);
+
   const activeClip = state.clips[activeIndex];
   const activeMedia = activeClip
     ? state.media.find((m) => m.id === activeClip.mediaId)
     : undefined;
   const caption = state.captions.find((c) => seqPos >= c.start && seqPos < c.end);
+
+  /* aktif sahnenin tipi — altyazı stilini belirler */
+  const mood = (() => {
+    const fc = findClipAt(state.clips, seqPos);
+    if (!fc) return null;
+    const an = state.analysis[fc.clip.mediaId];
+    if (!an) return null;
+    const local = fc.clip.in + fc.local;
+    return an.segments.find((sg) => local >= sg.start && local < sg.end)?.type ?? null;
+  })();
   const f = state.filters;
 
   const toggleFull = () => {
@@ -227,7 +263,16 @@ export function Monitor({ scanning = false }: { scanning?: boolean }) {
 
         {caption && (
           <div className="absolute inset-x-0 bottom-10 z-[7] text-center">
-            <span className="rounded-[3px] bg-black/75 px-3 py-1.5 text-[14px] font-medium text-ink">
+            <span
+              className="rounded-[3px] px-3 py-1.5 text-[14px]"
+              style={{
+                background: "rgba(0,0,0,.78)",
+                color:
+                  mood === "action" ? "#ffd48a" : mood === "static" ? "#a9cdff" : "#f2efe6",
+                fontWeight: mood === "action" ? 700 : 500,
+                letterSpacing: mood === "action" ? "0.02em" : "0.01em",
+              }}
+            >
               {caption.text}
             </span>
           </div>

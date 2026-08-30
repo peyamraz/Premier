@@ -1,6 +1,13 @@
 import { useRef, useState } from "react";
 import { Icon } from "../lib/ui";
 import { TYPE_LABEL } from "./analysis";
+import {
+  listRoyaltyFreeMusic,
+  searchRoyaltyFreeMusic,
+  stopPreview,
+  togglePreview,
+  type StockTrack,
+} from "./music";
 import { SFX_META, SFX_TYPES, previewSfx } from "./sfx";
 import {
   ANIMS,
@@ -442,6 +449,9 @@ export function Inspector() {
         {/* ses efektleri */}
         <SfxPanel />
 
+        {/* stok müzik */}
+        <MusicPanel />
+
         {/* kısayollar */}
         <section className="rounded-[4px] border border-line bg-panel p-3">
           <p className={`${sectionTitle} mb-2`}>Kısayollar</p>
@@ -820,6 +830,170 @@ function SfxPanel() {
             </div>
           ))}
         </div>
+      )}
+    </section>
+  );
+}
+
+/* ================================================================== */
+/* Stok / telifsiz müzik (Wikimedia Commons)                           */
+/* ================================================================== */
+
+function MusicPanel() {
+  const { state, dispatch, toast } = useEditor();
+  const [tracks, setTracks] = useState<StockTrack[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
+  const [previewUrl, setPreviewUrl] = useState("");
+
+  const load = async (fn: () => Promise<StockTrack[]>) => {
+    setLoading(true);
+    setError("");
+    try {
+      const r = await fn();
+      setTracks(r);
+      if (!r.length) setError("Sonuç bulunamadı — başka bir terim deneyin");
+    } catch {
+      setError("Müzik arşivine ulaşılamadı (ağ gerekli)");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const useAsBgm = (t: StockTrack) => {
+    stopPreview();
+    setPreviewUrl("");
+    dispatch({ type: "SET_MUSIC", music: { url: t.url, title: t.title, artist: t.artist, volume: 0.55 } });
+    toast(`Fon müziği: “${t.title}”`);
+  };
+
+  return (
+    <section>
+      <p className={sectionTitle}>Stok Müzik</p>
+
+      {/* aktif fon müziği */}
+      {state.music && (
+        <div className="mb-2 rounded-[4px] border border-amb/45 bg-amb/8 p-3">
+          <div className="flex items-center gap-2">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[3px] bg-amb/15 text-amb">
+              <Icon name="music" className="h-3.5 w-3.5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-mono text-[11px] font-semibold text-amb">{state.music.title}</p>
+              <p className="truncate font-mono text-[9px] text-dim">
+                {state.music.artist} • telifsiz • dışa aktarıma yakılır
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                dispatch({ type: "SET_MUSIC", music: null });
+                toast("Fon müziği kaldırıldı");
+              }}
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[3px] border border-line text-dim transition-colors hover:border-rec hover:text-rec"
+              title="Fon müziğini kaldır"
+            >
+              <Icon name="x" className="h-3 w-3" />
+            </button>
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <span className="font-mono text-[9px] text-dim">SES</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round(state.music.volume * 100)}
+              onChange={(e) =>
+                dispatch({
+                  type: "SET_MUSIC",
+                  music: state.music ? { ...state.music, volume: Number(e.target.value) / 100 } : null,
+                })
+              }
+              className="range-amber flex-1"
+              aria-label="Fon müziği sesi"
+            />
+            <span className="w-8 text-right font-mono text-[9px] tabular-nums text-amb">
+              %{Math.round(state.music.volume * 100)}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* arama */}
+      <div className="flex gap-1.5">
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && query.trim()) void load(() => searchRoyaltyFreeMusic(query.trim()));
+          }}
+          placeholder="stok müzik ara… (örn. cinematic)"
+          className="h-7 min-w-0 flex-1 rounded-[3px] border border-line bg-bg0 px-2 font-mono text-[10.5px] text-ink outline-none placeholder:text-dim focus:border-amb/60"
+          aria-label="Stok müzik ara"
+        />
+        <button
+          onClick={() => void load(() => searchRoyaltyFreeMusic(query.trim() || "music"))}
+          disabled={loading}
+          className="h-7 rounded-[3px] border border-line px-2.5 font-mono text-[10px] text-mut transition-colors hover:border-amb/60 hover:text-amb disabled:opacity-40"
+        >
+          ARA
+        </button>
+      </div>
+      <button
+        onClick={() => void load(listRoyaltyFreeMusic)}
+        disabled={loading}
+        className="mt-1.5 w-full rounded-[3px] border border-line py-1.5 font-mono text-[9.5px] tracking-[0.14em] text-dim transition-colors hover:border-scope/60 hover:text-scope disabled:opacity-40"
+      >
+        ▸ TELİFSİZ ARŞİVİ YÜKLE (CC-BY)
+      </button>
+
+      {/* liste */}
+      {loading && (
+        <p className="mt-2 flex items-center gap-2 font-mono text-[10px] text-dim">
+          <span className="pulse-dot h-2 w-2 rounded-full bg-amb" /> arşiv taranıyor…
+        </p>
+      )}
+      {!loading && error && <p className="mt-2 font-mono text-[10px] text-rec">{error}</p>}
+      {!loading && tracks && tracks.length > 0 && (
+        <ul className="mt-2 max-h-44 space-y-1 overflow-y-auto pr-1">
+          {tracks.map((t) => (
+            <li
+              key={t.url}
+              className="flex items-center gap-2 rounded-[3px] border border-line bg-panel px-2 py-1.5 transition-colors hover:border-line2"
+            >
+              <button
+                onClick={() => togglePreview(t.url, (p) => setPreviewUrl(p ? t.url : ""))}
+                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-[3px] border transition-colors ${
+                  previewUrl === t.url
+                    ? "border-amb bg-amb/15 text-amb"
+                    : "border-line text-dim hover:border-amb/60 hover:text-amb"
+                }`}
+                title="Önizle / durdur"
+              >
+                <Icon name={previewUrl === t.url ? "pause" : "play"} className="ml-px h-3 w-3" />
+              </button>
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-mono text-[10.5px] text-ink">{t.title}</p>
+                <p className="truncate font-mono text-[8.5px] text-dim">
+                  {t.artist} • {t.license} • {t.mime.includes("ogg") ? "OGG" : t.mime.replace("audio/", "").toUpperCase()}
+                </p>
+              </div>
+              <button
+                onClick={() => useAsBgm(t)}
+                className="shrink-0 rounded-[3px] border border-amb/50 px-2 py-1 font-mono text-[9px] font-bold tracking-wider text-amb transition-all hover:bg-amb hover:text-bg0"
+                title="Fon müziği olarak kullan"
+              >
+                KULLAN
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {!loading && !tracks && !error && (
+        <p className="mt-2 font-mono text-[9px] leading-relaxed text-dim">
+          ▸ Arşivden ya da aramayla telifsiz parça bul, “KULLAN” de — sekansla
+          birlikte çalar ve dışa aktarıma işlenir.
+        </p>
       )}
     </section>
   );

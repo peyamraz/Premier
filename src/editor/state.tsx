@@ -47,6 +47,7 @@ export interface ProjectState {
   captions: Caption[];
   layers: MotionLayer[];
   sfx: SFXItem[];
+  music: { url: string; title: string; artist: string; volume: number } | null;
   analysis: AnalysisMap;
   filters: Filters;
   volume: number;
@@ -72,6 +73,7 @@ export type Action =
   | { type: "SELECT_CAPTION"; id: string | null }
   | { type: "SET_ANALYSIS_ENTRY"; mediaId: string; result: AnalysisResult }
   | { type: "CLEAR_ANALYSIS" }
+  | { type: "SET_MUSIC"; music: ProjectState["music"] }
   | { type: "ADD_SFX"; item: SFXItem }
   | { type: "REMOVE_SFX"; id: string }
   | { type: "UPDATE_SFX"; id: string; patch: Partial<SFXItem> }
@@ -165,6 +167,8 @@ function reducer(s: ProjectState, a: Action): ProjectState {
       };
     case "SELECT_CAPTION":
       return { ...s, selCaption: a.id, selClip: a.id ? null : s.selClip };
+    case "SET_MUSIC":
+      return { ...s, music: a.music };
     case "ADD_SFX":
       return { ...s, sfx: [...s.sfx, a.item].sort((p, q) => p.start - q.start) };
     case "REMOVE_SFX":
@@ -230,6 +234,7 @@ function reducer(s: ProjectState, a: Action): ProjectState {
         captions: [],
         layers: [],
         sfx: [],
+        music: null,
         analysis: {},
         selClip: null,
         selCaption: null,
@@ -247,6 +252,7 @@ const INITIAL: ProjectState = {
   captions: [],
   layers: [],
   sfx: [],
+  music: null,
   analysis: {},
   filters: DEFAULT_FILTERS,
   volume: 0.9,

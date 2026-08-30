@@ -90,6 +90,9 @@ type Intent =
   | { t: "sfxAdd"; type: SFXType | null }
   | { t: "autoSfx" }
   | { t: "ticker"; text: string }
+  | { t: "tts" }
+  | { t: "ttsStop" }
+  | { t: "musicOff" }
   | { t: "unknown"; raw: string };
 
 /* ------------------------------------------------------------------ */
@@ -111,7 +114,8 @@ const HELP_LINES = [
   "GRAFİK — “başlık ekle: DENİZ & MERT” · “alt bant: İrem — Gelin” · “metin: hoş geldiniz” · “animasyon: daktilo” · “easing: zıplayan” · “yazı büyüt” · “grafikleri temizle”",
   "ALTYAZI — “altyazı ekle: Merhaba dünya” · “altyazıları temizle”",
   "GEZİNME — “oynat” · “durdur” · “5 saniye ileri” · “yarısına git” · “sona git”",
-  "PROJE — “video yükle” · “dışa aktar” · “sesi kapat” · “otomatik kurgula” · “otomatik grafik”",
+  "SES — “otomatik ses efekti” · “ses ekle: whoosh” · “altyazıları seslendir” (TTS) · “seslendirme durdur” · stok müzik: Denetçi ▸ Stok Müzik",
+  "PROJE — “video yükle” · “dışa aktar” · “sesi kapat” · “otomatik kurgula” · “otomatik grafik” · “fon müziğini kaldır”",
 ];
 
 export const SUGGESTIONS: { label: string; cmd: string }[] = [
@@ -119,6 +123,9 @@ export const SUGGESTIONS: { label: string; cmd: string }[] = [
   { label: "Analiz Et", cmd: "videoyu analiz et" },
   { label: "Beat Senkron", cmd: "beat senkron kes" },
   { label: "Otomatik Grafik", cmd: "otomatik grafik" },
+  { label: "Otomatik Ses Efekti", cmd: "otomatik ses efekti" },
+  { label: "Seslendir", cmd: "altyazıları seslendir" },
+  { label: "Kayan Yazı", cmd: "kayan yazı: FRAMEFORGE" },
   { label: "Başlık Ekle", cmd: "başlık ekle: DENİZ & MERT" },
   { label: "Alt Bant", cmd: "alt bant: İrem — Gelin" },
   { label: "Daktilo Animasyon", cmd: "animasyon: daktilo" },
@@ -161,6 +168,11 @@ function parse(text: string, raw: string): Intent {
   if (/(analiz|tara|scan|incele)/.test(text)) return { t: "analyze" };
   if (/(beat|ritim|bpm|müzik)/.test(text) && /(kes|senkron|oturt|uydur)/.test(text)) return { t: "beatsync" };
   if (/otomatik/.test(text) && /(ses|sfx|efekt)/.test(text)) return { t: "autoSfx" };
+  if (/(seslendir|dublaj|konuştur|tts)/.test(text)) {
+    if (/(durdur|kes|kapat)/.test(text)) return { t: "ttsStop" };
+    return { t: "tts" };
+  }
+  if (/(fon müziği|müzik)[\s-]*(durdur|kaldır|sil)/.test(text)) return { t: "musicOff" };
   if (/(kayan yazı|akan yazı|ticker|yazı takibi)/.test(text)) {
     const m = raw.match(/[:\-–]\s*(.+)$/);
     return { t: "ticker", text: m ? m[1].trim() : "FRAMEFORGE PRO" };
@@ -567,6 +579,41 @@ export async function executeCommand(raw: string, ctx: AICtx): Promise<void> {
       ctx.log("ok", `Kayan yazı eklendi: “${intent.text}” — ekranı ${Math.max(end, 4).toFixed(0)} sn'de tarıyor`);
       break;
     }
+    case "tts": {
+      const s = ctx.getState();
+      if (!("speechSynthesis" in window)) {
+        ctx.log("warn", "Tarayıcı konuşma sentezini desteklemiyor");
+        break;
+      }
+      const caps = s.captions;
+      if (!caps.length) {
+        ctx.log("warn", "Seslendirilecek altyazı yok — önce “altyazı ekle: …” ya da otomatik kurgu çalıştırın");
+        break;
+      }
+      const synth = window.speechSynthesis;
+      synth.cancel();
+      const voices = synth.getVoices();
+      const v =
+        voices.find((x) => x.lang.toLowerCase().startsWith("tr")) ??
+        voices.find((x) => x.default) ??
+        voices[0];
+      caps.forEach((c) => {
+        const u = new SpeechSynthesisUtterance(c.text);
+        if (v) u.voice = v;
+        u.rate = 0.95;
+        synth.speak(u);
+      });
+      ctx.log("ok", `${caps.length} altyazı seslendiriliyor — ses: ${v?.name ?? "varsayılan"}`);
+      break;
+    }
+    case "ttsStop":
+      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+      ctx.log("ok", "Seslendirme durduruldu");
+      break;
+    case "musicOff":
+      ctx.dispatch({ type: "SET_MUSIC", music: null });
+      ctx.log("ok", "Fon müziği kaldırıldı");
+      break;
     case "unknown":
       ctx.log("warn", `“${intent.raw}” komutunu çözemedim.`);
       await sleep(180);
