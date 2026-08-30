@@ -73,6 +73,7 @@ export type Action =
   | { type: "SELECT_CAPTION"; id: string | null }
   | { type: "SET_ANALYSIS_ENTRY"; mediaId: string; result: AnalysisResult }
   | { type: "CLEAR_ANALYSIS" }
+  | { type: "SET_CLIPS"; clips: Clip[] }
   | { type: "SET_MUSIC"; music: ProjectState["music"] }
   | { type: "ADD_SFX"; item: SFXItem }
   | { type: "REMOVE_SFX"; id: string }
@@ -169,6 +170,12 @@ function reducer(s: ProjectState, a: Action): ProjectState {
       return { ...s, selCaption: a.id, selClip: a.id ? null : s.selClip };
     case "SET_MUSIC":
       return { ...s, music: a.music };
+    case "SET_CLIPS":
+      return {
+        ...s,
+        clips: a.clips,
+        selClip: a.clips.some((c) => c.id === s.selClip) ? s.selClip : null,
+      };
     case "ADD_SFX":
       return { ...s, sfx: [...s.sfx, a.item].sort((p, q) => p.start - q.start) };
     case "REMOVE_SFX":

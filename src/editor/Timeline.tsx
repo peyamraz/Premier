@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from "react";
 import { Icon } from "../lib/ui";
 import { TYPE_BADGE, TYPE_LABEL } from "./analysis";
+import { cutSilence, ensureAnalysis, snapBeats, splitScenes } from "./smartcut";
 import { MIN_CLIP, clamp, clipDur, cumStart, findClipAt, fmtShort, seqDuration } from "./model";
 import { SFX_META } from "./sfx";
 import { useEditor } from "./state";
@@ -35,6 +36,42 @@ export function Timeline() {
   const { state, dispatch, seqPos, playing, seek, totalDur, splitAtPlayhead, toast } = useEditor();
   const [zoom, setZoom] = useState(1);
   const [armed, setArmed] = useState(false);
+  const [smartBusy, setSmartBusy] = useState<string | null>(null);
+
+  /* içeriğe uygun kesme araçları */
+  const runSmart = async (kind: "silence" | "scenes" | "beats") => {
+    if (smartBusy) return;
+    if (!state.clips.length) {
+      toast("Önce zaman çizelgesine klip ekleyin");
+      return;
+    }
+    setSmartBusy(kind);
+    try {
+      const map = await ensureAnalysis(state.media, state.analysis, dispatch, (l) => setSmartBusy(`${kind}:${l}`));
+      const src = state.clips;
+      if (kind === "silence") {
+        const r = cutSilence(src, map);
+        if (r.cuts) {
+          dispatch({ type: "SET_CLIPS", clips: r.clips });
+          toast(`${r.cuts} ölü boşluk kesildi (${r.removedSec.toFixed(1)} sn atıldı)`);
+        } else toast("Kesilecek ölü boşluk bulunamadı");
+      } else if (kind === "scenes") {
+        const r = splitScenes(src, map);
+        if (r.splits) {
+          dispatch({ type: "SET_CLIPS", clips: r.clips });
+          toast(`${r.splits} sahne geçişinden bölündü`);
+        } else toast("Klipler içinde sahne geçişi bulunamadı");
+      } else {
+        const r = snapBeats(src, map);
+        if (r.snaps) {
+          dispatch({ type: "SET_CLIPS", clips: r.clips });
+          toast(`${r.snaps} kesim beat ızgarasına oturtuldu`);
+        } else toast("Yakında beat bulunamadı — müzik içeren video deneyin");
+      }
+    } finally {
+      setSmartBusy(null);
+    }
+  };
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const innerRef = useRef<HTMLDivElement | null>(null);
   const drag = useRef<DragInfo | null>(null);
@@ -309,6 +346,37 @@ export function Timeline() {
         >
           <Icon name="text" className="h-3 w-3" /> ALTYAZI
         </button>
+        <span className="mx-1 hidden h-4 w-px bg-line sm:block" />
+        <span className="hidden font-mono text-[9px] tracking-[0.18em] text-dim md:block">İÇERİĞE GÖRE:</span>
+        <button
+          onClick={() => void runSmart("silence")}
+          disabled={!!smartBusy}
+          title="Analizle bulunan ölü boşlukları (sessizlikleri) keser"
+          className="flex h-6 items-center gap-1.5 rounded-[3px] border border-line px-2 font-mono text-[10px] text-mut transition-colors hover:border-amb/60 hover:text-amb disabled:opacity-40"
+        >
+          <Icon name="scissors" className="h-3 w-3" /> SESSİZLİK KES
+        </button>
+        <button
+          onClick={() => void runSmart("scenes")}
+          disabled={!!smartBusy}
+          title="Histogram farkıyla bulunan sahne geçişlerinden böler"
+          className="flex h-6 items-center gap-1.5 rounded-[3px] border border-line px-2 font-mono text-[10px] text-mut transition-colors hover:border-amb/60 hover:text-amb disabled:opacity-40"
+        >
+          <Icon name="film" className="h-3 w-3" /> SAHNE BÖL
+        </button>
+        <button
+          onClick={() => void runSmart("beats")}
+          disabled={!!smartBusy}
+          title="Kesim noktalarını tespit edilen BPM ızgarasına oturtur"
+          className="flex h-6 items-center gap-1.5 rounded-[3px] border border-line px-2 font-mono text-[10px] text-mut transition-colors hover:border-amb/60 hover:text-amb disabled:opacity-40"
+        >
+          <Icon name="wave" className="h-3 w-3" /> BEAT OTURT
+        </button>
+        {smartBusy && (
+          <span className="pulse-dot font-mono text-[9px] tracking-wider text-amb">
+            {smartBusy.includes(":") ? smartBusy.split(":")[1] : "analiz ediliyor"}…
+          </span>
+        )}
         <div className="ml-auto flex items-center gap-1.5">
           <span className="hidden font-mono text-[10px] text-dim sm:block">
             {state.clips.length} klip • {fmtShort(totalDur)}

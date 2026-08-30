@@ -2,6 +2,8 @@ import type { Dispatch } from "react";
 import type { AnimType, Easing, Filters } from "./model";
 import { DEFAULT_FILTERS, MIN_CLIP, clamp, clipDur, cumStart, makeLayer, seqDuration, uid } from "./model";
 import { SFX_META, SFX_TYPES, previewSfx, type SFXType } from "./sfx";
+import { PROCEDURAL_TRACKS, getProceduralUrl, type ProcKind } from "./bgm";
+import { cutSilence, ensureAnalysis, splitScenes } from "./smartcut";
 import type { Action, ProjectState, SFXItem } from "./state";
 import { analyzeMedia, TYPE_LABEL, type AnalysisMap, type AnalysisResult } from "./analysis";
 
@@ -93,6 +95,8 @@ type Intent =
   | { t: "tts" }
   | { t: "ttsStop" }
   | { t: "musicOff" }
+  | { t: "smartCut"; kind: "silence" | "scenes" }
+  | { t: "bgmProc"; kind: ProcKind }
   | { t: "unknown"; raw: string };
 
 /* ------------------------------------------------------------------ */
@@ -114,7 +118,8 @@ const HELP_LINES = [
   "GRAFİK — “başlık ekle: DENİZ & MERT” · “alt bant: İrem — Gelin” · “metin: hoş geldiniz” · “animasyon: daktilo” · “easing: zıplayan” · “yazı büyüt” · “grafikleri temizle”",
   "ALTYAZI — “altyazı ekle: Merhaba dünya” · “altyazıları temizle”",
   "GEZİNME — “oynat” · “durdur” · “5 saniye ileri” · “yarısına git” · “sona git”",
-  "SES — “otomatik ses efekti” · “ses ekle: whoosh” · “altyazıları seslendir” (TTS) · “seslendirme durdur” · stok müzik: Denetçi ▸ Stok Müzik",
+  "SES — “otomatik ses efekti” · “ses ekle: whoosh” · “fon müziği: lofi/ambiyans/nabız” (çevrimdışı sentez) · “altyazıları seslendir” · stok müzik: Denetçi ▸ Stok Müzik",
+  "İÇERİĞE GÖRE KES — “sessizlikleri kes” · “sahnelerden böl” · “beat senkron kes” — ya da zaman çizelgesi araç çubuğu",
   "PROJE — “video yükle” · “dışa aktar” · “sesi kapat” · “otomatik kurgula” · “otomatik grafik” · “fon müziğini kaldır”",
 ];
 
@@ -122,6 +127,9 @@ export const SUGGESTIONS: { label: string; cmd: string }[] = [
   { label: "Otomatik Kurgula", cmd: "otomatik kurgula" },
   { label: "Analiz Et", cmd: "videoyu analiz et" },
   { label: "Beat Senkron", cmd: "beat senkron kes" },
+  { label: "Sessizlik Kes", cmd: "sessizlikleri kes" },
+  { label: "Sahne Böl", cmd: "sahnelerden böl" },
+  { label: "Dahili Müzik", cmd: "fon müziği: lofi" },
   { label: "Otomatik Grafik", cmd: "otomatik grafik" },
   { label: "Otomatik Ses Efekti", cmd: "otomatik ses efekti" },
   { label: "Seslendir", cmd: "altyazıları seslendir" },
@@ -173,6 +181,18 @@ function parse(text: string, raw: string): Intent {
     return { t: "tts" };
   }
   if (/(fon müziği|müzik)[\s-]*(durdur|kaldır|sil)/.test(text)) return { t: "musicOff" };
+  {
+    const m = text.match(/(?:fon müziği|müzik)\s*[:\-]?\s*(ambiyans|amfi|pad|lofi|lo-fi|kurgu|nabız|nabiz|ritim|pulse)/);
+    if (m) {
+      const w = m[1];
+      const kind: ProcKind = /lofi|lo-fi|kurgu/.test(w) ? "lofi" : /nabız|nabiz|ritim|pulse/.test(w) ? "nabiz" : "ambiens";
+      return { t: "bgmProc", kind };
+    }
+    if (/(fon müziği|arka plan)/.test(text) && /(aç|ekle|başlat|koy|ver)/.test(text)) return { t: "bgmProc", kind: "lofi" };
+  }
+  if (/(sessizlik|sessiz|ölü boşluk|boşluk)[\wğüşöçı ]*(kes|sil|at|kaldır)/.test(text) || /(kes|at)[\w ]*(sessizlik|boşluk)/.test(text))
+    return { t: "smartCut", kind: "silence" };
+  if (/sahne[\wğüşöçı ]*(böl|kes|ayır)/.test(text)) return { t: "smartCut", kind: "scenes" };
   if (/(kayan yazı|akan yazı|ticker|yazı takibi)/.test(text)) {
     const m = raw.match(/[:\-–]\s*(.+)$/);
     return { t: "ticker", text: m ? m[1].trim() : "FRAMEFORGE PRO" };
@@ -614,6 +634,51 @@ export async function executeCommand(raw: string, ctx: AICtx): Promise<void> {
       ctx.dispatch({ type: "SET_MUSIC", music: null });
       ctx.log("ok", "Fon müziği kaldırıldı");
       break;
+    case "smartCut": {
+      const s0 = ctx.getState();
+      if (!s0.clips.length) {
+        ctx.log("warn", "Zaman çizelgesi boş — önce klip ekleyin");
+        break;
+      }
+      ctx.onScanning(true);
+      ctx.log("ai", intent.kind === "silence" ? "Ölü boşluklar taranıyor (RMS zarfı)…" : "Sahne geçişleri taranıyor (histogram farkı)…");
+      const map = await ensureAnalysis(s0.media, s0.analysis, ctx.dispatch, (l) => ctx.prog(l, 45));
+      if (ctx.cancelRef.current) {
+        ctx.onScanning(false);
+        break;
+      }
+      const s = ctx.getState();
+      if (intent.kind === "silence") {
+        const r = cutSilence(s.clips, map);
+        if (r.cuts) {
+          ctx.dispatch({ type: "SET_CLIPS", clips: r.clips });
+          ctx.log("ok", `${r.cuts} ölü boşluk kesildi — ${r.removedSec.toFixed(1)} sn atıldı`);
+          ctx.toast(`${r.cuts} boşluk kesildi`);
+        } else ctx.log("warn", "Kesilecek ölü boşluk bulunamadı");
+      } else {
+        const r = splitScenes(s.clips, map);
+        if (r.splits) {
+          ctx.dispatch({ type: "SET_CLIPS", clips: r.clips });
+          ctx.log("ok", `${r.splits} sahne geçişinden bölündü`);
+          ctx.toast(`${r.splits} sahneden bölündü`);
+        } else ctx.log("warn", "Klipler içinde sahne geçişi bulunamadı");
+      }
+      ctx.onScanning(false);
+      break;
+    }
+    case "bgmProc": {
+      try {
+        ctx.log("ai", "Dahili motor müzik sentezliyor (OfflineAudioContext)…");
+        const url = await getProceduralUrl(intent.kind);
+        const meta = PROCEDURAL_TRACKS.find((p) => p.kind === intent.kind)!;
+        ctx.dispatch({ type: "SET_MUSIC", music: { url, title: meta.title, artist: "FrameForge Motor", volume: 0.55 } });
+        ctx.log("ok", `Fon müziği hazır: “${meta.title}” — ${meta.bpm} BPM, telifsiz sentez, dışa aktarıma yakılır`);
+        ctx.toast(`Fon müziği: ${meta.title}`);
+      } catch {
+        ctx.log("warn", "Müzik sentezlenemedi — WebAudio desteklenmiyor olabilir");
+      }
+      break;
+    }
     case "unknown":
       ctx.log("warn", `“${intent.raw}” komutunu çözemedim.`);
       await sleep(180);

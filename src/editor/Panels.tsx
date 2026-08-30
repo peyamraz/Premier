@@ -8,6 +8,7 @@ import {
   togglePreview,
   type StockTrack,
 } from "./music";
+import { PROCEDURAL_TRACKS, getProceduralUrl, type ProcKind, type ProcTrack } from "./bgm";
 import { SFX_META, SFX_TYPES, previewSfx } from "./sfx";
 import {
   ANIMS,
@@ -868,6 +869,23 @@ function MusicPanel() {
     toast(`Fon müziği: “${t.title}”`);
   };
 
+  const [procBusy, setProcBusy] = useState<ProcKind | null>(null);
+  const useProc = async (p: ProcTrack) => {
+    if (procBusy) return;
+    setProcBusy(p.kind);
+    try {
+      const url = await getProceduralUrl(p.kind);
+      stopPreview();
+      setPreviewUrl("");
+      dispatch({ type: "SET_MUSIC", music: { url, title: p.title, artist: "FrameForge Motor", volume: 0.55 } });
+      toast(`Fon müziği: “${p.title}” — dahili sentez, telifsiz`);
+    } catch {
+      toast("Sentez başarısız — tarayıcı WebAudio desteklemiyor olabilir");
+    } finally {
+      setProcBusy(null);
+    }
+  };
+
   return (
     <section>
       <p className={sectionTitle}>Stok Müzik</p>
@@ -919,8 +937,39 @@ function MusicPanel() {
         </div>
       )}
 
+      {/* dahili motor — çevrimdışı, garantili çalışır */}
+      <div className="mt-2 rounded-[4px] border border-scope/35 bg-scope/5 p-2.5">
+        <p className="mb-2 flex items-center gap-1.5 font-mono text-[9px] tracking-[0.18em] text-scope">
+          <Icon name="bolt" className="h-3 w-3" /> DAHİLİ MOTOR — ÇEVRİMDIŞI HAZIR
+        </p>
+        <div className="grid grid-cols-3 gap-1.5">
+          {PROCEDURAL_TRACKS.map((p) => (
+            <button
+              key={p.kind}
+              onClick={() => void useProc(p)}
+              disabled={procBusy === p.kind}
+              title={p.desc}
+              className="flex flex-col items-start gap-0.5 rounded-[3px] border border-line bg-bg0 px-2 py-2 text-left transition-all hover:-translate-y-0.5 hover:border-scope/70 hover:shadow-[0_6px_18px_rgba(59,214,176,.12)] disabled:opacity-50"
+            >
+              <span className="font-mono text-[9px] font-semibold leading-tight text-ink">{p.title}</span>
+              <span className="font-mono text-[8px] text-dim">
+                {p.bpm} BPM · {p.dur.toFixed(0)} sn
+              </span>
+              {procBusy === p.kind ? (
+                <span className="pulse-dot font-mono text-[8px] text-scope">sentezleniyor…</span>
+              ) : (
+                <span className="font-mono text-[8px] text-scope">▸ kullan</span>
+              )}
+            </button>
+          ))}
+        </div>
+        <p className="mt-1.5 font-mono text-[8.5px] leading-relaxed text-dim">
+          Gerçek zamanlı sentez — ağ gerektirmez, dışa aktarıma yakılır.
+        </p>
+      </div>
+
       {/* arama */}
-      <div className="flex gap-1.5">
+      <div className="mt-2 flex gap-1.5">
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}

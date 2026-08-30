@@ -109,31 +109,39 @@ export function Monitor({ scanning = false }: { scanning?: boolean }) {
     };
   }, []);
 
-  /* BGM (stok müzik) oynatma */
+  /* BGM (stok / dahili müzik) oynatma */
   const bgmRef = useRef<HTMLAudioElement | null>(null);
+  const bgmUrlRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!bgmRef.current) {
-      bgmRef.current = new Audio();
-      bgmRef.current.loop = true;
+    let el = bgmRef.current;
+    if (!el) {
+      el = new Audio();
+      el.loop = true;
+      bgmRef.current = el;
     }
-    const el = bgmRef.current;
-    if (state.music) {
-      if (el.src !== state.music.url) {
-        el.src = state.music.url;
+    const url = state.music?.url ?? null;
+    if (url !== bgmUrlRef.current) {
+      bgmUrlRef.current = url;
+      if (url) {
+        el.src = url;
         el.currentTime = 0;
+      } else {
+        el.pause();
+        el.removeAttribute("src");
+        el.load();
       }
-      el.volume = state.music.volume * (state.muted ? 0 : 1);
-      if (playing) void el.play().catch(() => {});
-      else el.pause();
-    } else {
-      el.pause();
-      el.removeAttribute("src");
-      el.load();
     }
-    return () => {
-      el.pause();
-    };
+    if (el) el.volume = state.music ? state.music.volume * (state.muted ? 0 : 1) : 0;
+    if (url && playing) void el.play().catch(() => {});
+    else el?.pause();
   }, [state.music, playing, state.muted]);
+  useEffect(
+    () => () => {
+      bgmRef.current?.pause();
+      bgmRef.current = null;
+    },
+    [],
+  );
 
   const activeClip = state.clips[activeIndex];
   const activeMedia = activeClip
