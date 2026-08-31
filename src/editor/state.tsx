@@ -91,7 +91,7 @@ export type Action =
   | { type: "SET_EFFECTS"; effects: EffectsState }
   | { type: "SET_CAPTION_STYLE"; style: CaptionStyleKey }
   | { type: "SET_CAPTIONS"; captions: Caption[] }
-  | { type: "CLIP_TRANSFORM"; id: string; patch: Partial<Pick<Clip, "fit" | "scale" | "tx" | "ty">> }
+  | { type: "CLIP_TRANSFORM"; id: string; patch: Partial<Pick<Clip, "fit" | "scale" | "tx" | "ty" | "speed">> }
   | { type: "FIT_ALL"; mode: FitMode }
   | { type: "RESET_TRANSFORM"; id: string }
   | { type: "SET_MUSIC"; music: ProjectState["music"] }
@@ -487,7 +487,11 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       if (media?.kind === "video") {
         const el = mediaEls.current[media.id];
         if (el) {
-          const t = clamp(clip.in + offset, 0, Math.max(clip.out, media.duration || clip.out));
+          const sp = clip.speed ?? 1;
+          const t = clamp(clip.in + offset * sp, 0, Math.max(clip.out, media.duration || clip.out));
+          if (el.playbackRate !== sp) {
+            el.playbackRate = sp;
+          }
           if (Math.abs(el.currentTime - t) > 0.02) {
             try {
               el.currentTime = t;
@@ -543,7 +547,11 @@ export function EditorProvider({ children }: { children: ReactNode }) {
             const el = mediaEls.current[media.id];
             if (el) {
               if (el.ended || el.currentTime >= clip.out - 0.045) advance();
-              else setSeq(cumStart(s.clips, idx) + Math.max(0, el.currentTime - clip.in));
+              else
+                setSeq(
+                  cumStart(s.clips, idx) +
+                    Math.max(0, el.currentTime - clip.in) / (clip.speed ?? 1),
+                );
             }
           } else {
             imageTime.current += dt;
@@ -576,7 +584,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
           const m = s.media.find((x) => x.id === hit.clip.mediaId);
           if (m?.kind === "video") {
             const el = mediaEls.current[m.id];
-            const target = hit.clip.in + hit.local;
+            const target = hit.clip.in + hit.local * (hit.clip.speed ?? 1);
             if (el && Math.abs(el.currentTime - target) > 0.35) {
               try {
                 el.currentTime = target;
@@ -663,7 +671,11 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       toast("Bölmek için oynatma başlığını klip içine taşıyın");
       return;
     }
-    dispatch({ type: "SPLIT_CLIP", id: hit.clip.id, at: hit.clip.in + hit.local });
+    dispatch({
+      type: "SPLIT_CLIP",
+      id: hit.clip.id,
+      at: hit.clip.in + hit.local * (hit.clip.speed ?? 1),
+    });
     toast("Klip bölündü — Ctrl+Z yerine sil/birleştir kullanın");
   }, [toast]);
 
@@ -671,7 +683,11 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     const s = stateRef.current;
     const hit = findClipAt(s.clips, seqPosRef.current);
     if (!hit) return;
-    dispatch({ type: "TRIM_CLIP", id: hit.clip.id, in: hit.clip.in + hit.local });
+    dispatch({
+      type: "TRIM_CLIP",
+      id: hit.clip.id,
+      in: hit.clip.in + hit.local * (hit.clip.speed ?? 1),
+    });
     toast("Giriş noktası işaretlendi [I]");
   }, [toast]);
 
@@ -679,7 +695,11 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     const s = stateRef.current;
     const hit = findClipAt(s.clips, seqPosRef.current);
     if (!hit) return;
-    dispatch({ type: "TRIM_CLIP", id: hit.clip.id, out: hit.clip.in + hit.local });
+    dispatch({
+      type: "TRIM_CLIP",
+      id: hit.clip.id,
+      out: hit.clip.in + hit.local * (hit.clip.speed ?? 1),
+    });
     toast("Çıkış noktası işaretlendi [O]");
   }, [toast]);
 

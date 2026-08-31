@@ -293,9 +293,18 @@ export function AIBar({ inputRef, onExport, onImport, onScanning }: AIBarProps) 
       await executeCommand(text, ctxRef.current!);
     } finally {
       setBusy(false);
-      inputRef.current?.focus();
     }
   };
+
+  /* Denetçi OTO sekmesindeki butonlar komutları bu olayla iletir */
+  useEffect(() => {
+    const h = (e: Event) => {
+      const cmd = (e as CustomEvent<string>).detail;
+      if (typeof cmd === "string" && cmd) void run(cmd);
+    };
+    window.addEventListener("ff-ai-cmd", h);
+    return () => window.removeEventListener("ff-ai-cmd", h);
+  });
 
   const runApply = async (b: ReportBundle, o: ApplyOptions) => {
     setReport(null);

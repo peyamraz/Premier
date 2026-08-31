@@ -472,6 +472,11 @@ export function Timeline() {
                       borderColor: isImg ? "rgba(59,214,176,.45)" : "rgba(255,180,60,.5)",
                     }}
                   >
+                    {c.speed && Math.abs(c.speed - 1) > 0.001 && (
+                      <span className="absolute right-1 top-0.5 z-[1] rounded-[2px] bg-bg0/85 px-1 font-mono text-[8px] font-bold tabular-nums text-amb">
+                        {c.speed}×
+                      </span>
+                    )}
                     {!isImg && (
                       <span className="absolute inset-x-0 top-1 flex gap-[3px] px-1">
                         {Array.from({ length: Math.max(2, Math.min(14, Math.floor((dur * pps) / 10))) }, (_, k) => (

@@ -120,17 +120,11 @@ type Intent =
   | { t: "unknown"; raw: string };
 
 /* ------------------------------------------------------------------ */
-/* renk paletleri                                                      */
+/* renk paletleri — model.ts'teki tek kaynaktan                        */
 /* ------------------------------------------------------------------ */
 
-export const PRESETS: Record<string, { label: string; f: Partial<Filters> }> = {
-  sinematik: { label: "Sinematik (turuncu-teal)", f: { contrast: 118, saturate: 112, brightness: 97, hue: -6 } },
-  sicak: { label: "Sıcak gün batımı", f: { brightness: 105, contrast: 106, saturate: 122, hue: -10 } },
-  soguk: { label: "Soğuk mavi", f: { contrast: 104, saturate: 90, hue: 16 } },
-  canli: { label: "Canlı / sosyal medya", f: { saturate: 145, contrast: 112, brightness: 104 } },
-  siyahbeyaz: { label: "Siyah-beyaz", f: { saturate: 0, contrast: 112 } },
-  vintage: { label: "Vintage film", f: { saturate: 80, contrast: 96, brightness: 105, hue: -14 } },
-};
+import { PRESETS } from "./model";
+export { PRESETS };
 
 const HELP_LINES = [
   "KURGU — “burada böl” · “seçili klibi sil” · “son klibi sil” · “hepsini temizle”",

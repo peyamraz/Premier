@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../lib/ui";
 import { TYPE_LABEL } from "./analysis";
 import {
@@ -16,9 +16,11 @@ import {
   ANIMS,
   CAPTION_STYLES,
   CAPTION_STYLE_KEYS,
+  DEFAULT_FILTERS,
   EASINGS,
   FIT_LABEL,
   FPS,
+  PRESETS,
   RATIOS,
   clipDur,
   cumStart,
@@ -493,28 +495,109 @@ function EffectsPanel() {
   );
 }
 
+type InspTab = "duzele" | "yazi" | "ses" | "grafik" | "oto";
+
+const INSP_TABS: { id: InspTab; label: string; icon: string; hint: string }[] = [
+  { id: "duzele", label: "DÜZELE", icon: "fx", hint: "Manuel düzeleme — çerçeve, renk, klip, efektler" },
+  { id: "yazi", label: "YAZI", icon: "text", hint: "Altyazılar • SRT • stiller • kelime sayısı" },
+  { id: "ses", label: "SES", icon: "volume", hint: "Ses efektleri • stok müzik" },
+  { id: "grafik", label: "GRAFİK", icon: "film", hint: "Hareketli grafik katmanları (AE tarzı)" },
+  { id: "oto", label: "OTO", icon: "bolt", hint: "MagnatesMedia stüdyo • otomatik araçlar" },
+];
+
 export function Inspector() {
-  const { state, dispatch, seek, seqPos, splitAtPlayhead, setInAtPlayhead, setOutAtPlayhead, toast } = useEditor();
-  const selClip = state.clips.find((c) => c.id === state.selClip) ?? null;
-  const selIndex = selClip ? state.clips.findIndex((c) => c.id === selClip.id) : -1;
-  const selMedia = selClip ? state.media.find((m) => m.id === selClip.mediaId) : null;
-  const f = state.filters;
+  const [tab, setTab] = useState<InspTab>("duzele");
+
+  /* 1–5 tuşlarıyla sekme değiştir */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      const typing =
+        !!el &&
+        (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable);
+      if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+      const i = ["1", "2", "3", "4", "5"].indexOf(e.key);
+      if (i >= 0) setTab(INSP_TABS[i].id);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex h-8 shrink-0 items-center gap-2 border-b border-line px-3">
         <span className="font-mono text-[10px] tracking-[0.22em] text-dim">DENETÇİ</span>
-        <span className="ml-auto font-mono text-[9px] text-dim">24 FPS • REC.709</span>
+        <span className="ml-auto font-mono text-[9px] text-dim">[1–5] SEKMELER</span>
+      </div>
+
+      {/* sekmeler */}
+      <div className="flex shrink-0 border-b border-line bg-bg1" role="tablist" aria-label="Denetçi sekmeleri">
+        {INSP_TABS.map((t, i) => {
+          const active = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={active}
+              onClick={() => setTab(t.id)}
+              title={`${t.hint} — kısayol: ${i + 1}`}
+              className={`relative flex h-9 flex-1 items-center justify-center gap-1 transition-colors ${
+                active ? "bg-panel text-amb" : "text-dim hover:bg-panel/60 hover:text-mut"
+              }`}
+            >
+              <Icon name={t.icon} className="h-3 w-3" />
+              <span className="font-mono text-[8.5px] font-semibold tracking-[0.1em]">{t.label}</span>
+              {active && <span className="absolute inset-x-1.5 bottom-0 h-[2px] rounded-t bg-amb" />}
+            </button>
+          );
+        })}
       </div>
 
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-3">
-        {/* magnates stil stüdyosu */}
-        <MagnatesPanel />
+        {tab === "duzele" && (
+          <>
+            <DuzelKlipSection />
+            <FramePanel />
+            <SpeedSection />
+            <RenkPanel />
+            <EffectsPanel />
+            <SesBolumu />
+          </>
+        )}
+        {tab === "yazi" && <CaptionPanel />}
+        {tab === "ses" && (
+          <>
+            <SfxPanel />
+            <MusicPanel />
+          </>
+        )}
+        {tab === "grafik" && <MotionGraphics />}
+        {tab === "oto" && (
+          <>
+            <MagnatesPanel />
+            <OtoAraclar />
+            <KisayollarKarti />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
 
-        {/* seçili klip */}
-        <section>
-          <p className={`${sectionTitle} mb-2`}>Seçili Klip</p>
-          {selClip && selMedia ? (
+/* ================================================================== */
+/* Sekme içerikleri — Manuel Düzeleme parçaları                        */
+/* ================================================================== */
+
+function DuzelKlipSection() {
+  const { state, seek, splitAtPlayhead, setInAtPlayhead, setOutAtPlayhead } = useEditor();
+  const selClip = state.clips.find((c) => c.id === state.selClip) ?? null;
+  const selIndex = selClip ? state.clips.findIndex((c) => c.id === selClip.id) : -1;
+  const selMedia = selClip ? state.media.find((m) => m.id === selClip.mediaId) : null;
+  return (
+    <>
+      <section>
+        <p className={`${sectionTitle} mb-2`}>Seçili Klip</p>
+        {selClip && selMedia ? (
             <div className="rounded-[4px] border border-line bg-panel p-3">
               <p className="flex items-center gap-2 font-mono text-[11px] text-ink">
                 <Icon name={selMedia.kind === "video" ? "film" : "image"} className="h-3.5 w-3.5 text-amb" />
@@ -556,97 +639,229 @@ export function Inspector() {
           )}
         </section>
 
-        {/* analiz bulguları */}
-        {selMedia && state.analysis[selMedia.id] && (
-          <AnalysisPanel an={state.analysis[selMedia.id]} name={selMedia.name} />
+      {/* analiz bulguları */}
+      {selMedia && state.analysis[selMedia.id] && (
+        <AnalysisPanel an={state.analysis[selMedia.id]} name={selMedia.name} />
+      )}
+    </>
+  );
+}
+
+const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
+
+function SpeedSection() {
+  const { state, dispatch, toast } = useEditor();
+  const selClip = state.clips.find((c) => c.id === state.selClip) ?? null;
+  const speed = selClip?.speed ?? 1;
+  return (
+    <section>
+      <div className="mb-2 flex items-center justify-between">
+        <p className={sectionTitle}>Klip Hızı</p>
+        {selClip && Math.abs(speed - 1) > 0.001 && (
+          <button
+            onClick={() => {
+              dispatch({ type: "CLIP_TRANSFORM", id: selClip.id, patch: { speed: 1 } });
+              toast("Hız 1× olarak sıfırlandı");
+            }}
+            className="font-mono text-[9px] tracking-wider text-dim transition-colors hover:text-rec"
+          >
+            SIFIRLA
+          </button>
         )}
-        {!selMedia && state.media.length > 0 && Object.keys(state.analysis).length > 0 && (
-          <AnalysisPanel an={Object.values(state.analysis)[0]} name={state.media.find((m) => m.id === Object.values(state.analysis)[0].mediaId)?.name ?? ""} />
-        )}
-
-        {/* çerçeve & oran */}
-        <FramePanel />
-
-        {/* görünüm */}
-        <section>
-          <div className="mb-2 flex items-center justify-between">
-            <p className={sectionTitle}>Renk & Dönüştür</p>
-            <button
-              onClick={() => {
-                dispatch({ type: "RESET_FILTERS" });
-                toast("Renk ayarları sıfırlandı");
-              }}
-              className="font-mono text-[9px] tracking-wider text-dim transition-colors hover:text-rec"
-            >
-              SIFIRLA
-            </button>
-          </div>
-          <div className="space-y-2.5 rounded-[4px] border border-line bg-panel p-3">
-            <Slider label="PARLAKLIK" value={f.brightness} min={40} max={180} unit="%" onChange={(v) => dispatch({ type: "SET_FILTER", patch: { brightness: v } })} />
-            <Slider label="KONTRAST" value={f.contrast} min={40} max={180} unit="%" onChange={(v) => dispatch({ type: "SET_FILTER", patch: { contrast: v } })} />
-            <Slider label="DOYGUNLUK" value={f.saturate} min={0} max={200} unit="%" onChange={(v) => dispatch({ type: "SET_FILTER", patch: { saturate: v } })} />
-            <Slider label="RENK TONU" value={f.hue} min={-90} max={90} unit="°" onChange={(v) => dispatch({ type: "SET_FILTER", patch: { hue: v } })} />
-            <div className="flex gap-1.5 pt-1">
-              <button
-                className={toolBtn}
-                onClick={() => dispatch({ type: "SET_FILTER", patch: { rotate: (f.rotate + 90) % 360 } })}
-                title="90° döndür"
-              >
-                <Icon name="rotate" className="h-3.5 w-3.5" /> {f.rotate}°
-              </button>
-              <button
-                className={`${toolBtn} ${f.flipH ? "border-amb text-amb" : ""}`}
-                onClick={() => dispatch({ type: "SET_FILTER", patch: { flipH: !f.flipH } })}
-                title="Yatay çevir"
-              >
-                <Icon name="flip" className="h-3.5 w-3.5" /> Y
-              </button>
-              <button
-                className={`${toolBtn} ${f.flipV ? "border-amb text-amb" : ""}`}
-                onClick={() => dispatch({ type: "SET_FILTER", patch: { flipV: !f.flipV } })}
-                title="Dikey çevir"
-              >
-                <Icon name="flip" className="h-3.5 w-3.5 rotate-90" /> D
-              </button>
-            </div>
-          </div>
-        </section>
-
-        {/* altyazılar */}
-        <CaptionPanel />
-
-        {/* hareketli grafikler */}
-        <MotionGraphics />
-
-        {/* ses efektleri */}
-        <SfxPanel />
-
-        {/* video efektleri */}
-        <EffectsPanel />
-
-        {/* stok müzik */}
-        <MusicPanel />
-
-        {/* kısayollar */}
-        <section className="rounded-[4px] border border-line bg-panel p-3">
-          <p className={`${sectionTitle} mb-2`}>Kısayollar</p>
-          <ul className="space-y-1.5 font-mono text-[10px] text-mut">
-            {[
-              ["BOŞLUK", "oynat / durdur"],
-              ["CTRL+K", "oynatma başlığında böl"],
-              ["I / O", "giriş / çıkış işaretle"],
-              ["← →", "kare adımı (Shift = 10)"],
-              ["DELETE", "seçili klibi sil"],
-            ].map(([k, v]) => (
-              <li key={k} className="flex items-center gap-2">
-                <span className="rounded-[3px] border border-line2 border-b-2 bg-bg0 px-1.5 py-0.5 text-[9px] text-amb">{k}</span>
-                <span className="text-dim">{v}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
       </div>
-    </div>
+      <div className="rounded-[4px] border border-line bg-panel p-3">
+        {selClip ? (
+          <>
+            <div className="flex overflow-hidden rounded-[3px] border border-line">
+              {SPEEDS.map((v) => {
+                const active = Math.abs(speed - v) < 0.001;
+                return (
+                  <button
+                    key={v}
+                    onClick={() => dispatch({ type: "CLIP_TRANSFORM", id: selClip.id, patch: { speed: v } })}
+                    title={`Klip hızı ${v}×`}
+                    className={`flex-1 py-1.5 font-mono text-[10px] tabular-nums transition-all active:translate-y-px ${
+                      active ? "bg-amb font-bold text-bg0 shadow-[inset_0_-2px_0_rgba(0,0,0,.25)]" : "bg-bg0 text-mut hover:bg-panel2 hover:text-ink"
+                    }`}
+                  >
+                    {v}×
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-2 font-mono text-[8.5px] leading-relaxed text-dim">
+              {speed < 1
+                ? "AĞIR ÇEKİM — dramatik anlar"
+                : speed > 1
+                  ? "HIZLANDIRMA — boşlukları sıkıştırır"
+                  : "NORMAL HIZ"}{" "}
+              • zaman çizelgesindeki süre: {fmtShort(clipDur(selClip))}
+            </p>
+          </>
+        ) : (
+          <p className="font-mono text-[9.5px] leading-relaxed text-dim">Hız ayarı için zaman çizelgesinde bir klip seçin.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function RenkPanel() {
+  const { state, dispatch, toast } = useEditor();
+  const f = state.filters;
+  const dirty = JSON.stringify(f) !== JSON.stringify(DEFAULT_FILTERS);
+  return (
+    <section>
+      <div className="mb-2 flex items-center justify-between">
+        <p className={sectionTitle}>Renk & Dönüştür</p>
+        <button
+          onClick={() => {
+            dispatch({ type: "RESET_FILTERS" });
+            toast("Renk ayarları sıfırlandı");
+          }}
+          className={`font-mono text-[9px] tracking-wider transition-colors hover:text-rec ${dirty ? "text-amb" : "text-dim"}`}
+        >
+          SIFIRLA{dirty ? " •" : ""}
+        </button>
+      </div>
+      <div className="space-y-2.5 rounded-[4px] border border-line bg-panel p-3">
+        <div>
+          <p className="mb-1.5 font-mono text-[9px] tracking-[0.18em] text-dim">PALETLER</p>
+          <div className="flex flex-wrap gap-1.5">
+            {Object.entries(PRESETS).map(([k, p]) => (
+              <button
+                key={k}
+                onClick={() => dispatch({ type: "SET_FILTER", patch: { ...DEFAULT_FILTERS, ...p.f } })}
+                title={`${p.label} paletini uygula`}
+                className="rounded-[3px] border border-line bg-bg0 px-2 py-1 font-mono text-[9.5px] text-mut transition-all hover:-translate-y-0.5 hover:border-amb/60 hover:text-amb active:translate-y-0"
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <Slider label="PARLAKLIK" value={f.brightness} min={40} max={180} unit="%" onChange={(v) => dispatch({ type: "SET_FILTER", patch: { brightness: v } })} />
+        <Slider label="KONTRAST" value={f.contrast} min={40} max={180} unit="%" onChange={(v) => dispatch({ type: "SET_FILTER", patch: { contrast: v } })} />
+        <Slider label="DOYGUNLUK" value={f.saturate} min={0} max={200} unit="%" onChange={(v) => dispatch({ type: "SET_FILTER", patch: { saturate: v } })} />
+        <Slider label="RENK TONU" value={f.hue} min={-90} max={90} unit="°" onChange={(v) => dispatch({ type: "SET_FILTER", patch: { hue: v } })} />
+        <Slider label="SICAKLIK" value={f.temp} min={-100} max={100} unit="" onChange={(v) => dispatch({ type: "SET_FILTER", patch: { temp: v } })} />
+        <Slider label="TİNT" value={f.tint} min={-100} max={100} unit="" onChange={(v) => dispatch({ type: "SET_FILTER", patch: { tint: v } })} />
+        <div className="flex gap-1.5 pt-1">
+          <button
+            className={toolBtn}
+            onClick={() => dispatch({ type: "SET_FILTER", patch: { rotate: (f.rotate + 90) % 360 } })}
+            title="90° döndür"
+          >
+            <Icon name="rotate" className="h-3.5 w-3.5" /> {f.rotate}°
+          </button>
+          <button
+            className={`${toolBtn} ${f.flipH ? "border-amb text-amb" : ""}`}
+            onClick={() => dispatch({ type: "SET_FILTER", patch: { flipH: !f.flipH } })}
+            title="Yatay çevir"
+          >
+            <Icon name="flip" className="h-3.5 w-3.5" /> Y
+          </button>
+          <button
+            className={`${toolBtn} ${f.flipV ? "border-amb text-amb" : ""}`}
+            onClick={() => dispatch({ type: "SET_FILTER", patch: { flipV: !f.flipV } })}
+            title="Dikey çevir"
+          >
+            <Icon name="flip" className="h-3.5 w-3.5 rotate-90" /> D
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SesBolumu() {
+  const { state, dispatch } = useEditor();
+  return (
+    <section>
+      <p className={`${sectionTitle} mb-2`}>Ana Ses</p>
+      <div className="rounded-[4px] border border-line bg-panel p-3">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => dispatch({ type: "SET_MUTED", muted: !state.muted })}
+            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[3px] border transition-colors ${
+              state.muted ? "border-rec/60 bg-rec/10 text-rec" : "border-line text-mut hover:border-amb/60 hover:text-amb"
+            }`}
+            title={state.muted ? "Sesi aç" : "Sesi kapat"}
+          >
+            <Icon name={state.muted ? "volumeX" : "volume"} className="h-4 w-4" />
+          </button>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={Math.round(state.volume * 100)}
+            onChange={(e) => dispatch({ type: "SET_VOLUME", volume: Number(e.target.value) / 100 })}
+            className="range-amber w-full"
+            aria-label="Ana ses düzeyi"
+          />
+          <span className="w-9 shrink-0 text-right font-mono text-[10px] tabular-nums text-amb">%{Math.round(state.volume * 100)}</span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+const OTO_CMDS: { label: string; cmd: string; icon: string; desc: string }[] = [
+  { label: "OTOMATİK KURGULA", cmd: "otomatik kurgula", icon: "bolt", desc: "Analiz + kesim + renk + altyazı + grafik" },
+  { label: "SESSİZLİK KES", cmd: "sessizlikleri kes", icon: "scissors", desc: "Ölü boşlukları gerçekten atar" },
+  { label: "SAHNE BÖL", cmd: "sahnelerden böl", icon: "film", desc: "Sahne geçişlerinden böler" },
+  { label: "OTOMATİK GRAFİK", cmd: "otomatik grafik", icon: "text", desc: "Jenerik + alt bantlar + kapanış" },
+  { label: "OTOMATİK SFX", cmd: "otomatik ses efekti", icon: "wave", desc: "Sahne tipine göre efekt döşer" },
+  { label: "ALTYAZI ÇIKAR", cmd: "altyazıları otomatik çıkar", icon: "volume", desc: "Konuşmayı yazıya çevirir" },
+];
+
+function OtoAraclar() {
+  const fire = (cmd: string) => window.dispatchEvent(new CustomEvent("ff-ai-cmd", { detail: cmd }));
+  return (
+    <section>
+      <p className={`${sectionTitle} mb-2`}>Otomatik Araçlar</p>
+      <div className="grid grid-cols-2 gap-1.5">
+        {OTO_CMDS.map((c) => (
+          <button
+            key={c.cmd}
+            onClick={() => fire(c.cmd)}
+            className="group flex flex-col items-start gap-1 rounded-[4px] border border-line bg-panel px-2.5 py-2 text-left transition-all hover:-translate-y-0.5 hover:border-scope/60 hover:shadow-[0_6px_18px_rgba(59,214,176,.08)] active:translate-y-0"
+          >
+            <span className="flex items-center gap-1.5 font-mono text-[9.5px] font-semibold tracking-wide text-ink transition-colors group-hover:text-scope">
+              <Icon name={c.icon} className="h-3 w-3 text-scope" /> {c.label}
+            </span>
+            <span className="font-mono text-[8px] leading-snug text-dim">{c.desc}</span>
+          </button>
+        ))}
+      </div>
+      <p className="mt-1.5 font-mono text-[8.5px] leading-relaxed text-dim">
+        ▸ Butonlar komutu AI konsoluna iletir, işlem anında başlar.
+      </p>
+    </section>
+  );
+}
+
+function KisayollarKarti() {
+  return (
+    <section className="rounded-[4px] border border-line bg-panel p-3">
+      <p className={`${sectionTitle} mb-2`}>Kısayollar</p>
+      <ul className="space-y-1.5 font-mono text-[10px] text-mut">
+        {[
+          ["1–5", "denetçi sekmeleri"],
+          ["BOŞLUK", "oynat / durdur"],
+          ["CTRL+K", "oynatma başlığında böl"],
+          ["I / O", "giriş / çıkış işaretle"],
+          ["← →", "kare adımı (Shift = 10)"],
+          ["DELETE", "seçili klibi sil"],
+          ["CTRL+J", "AI konsoluna odaklan"],
+        ].map(([k, v]) => (
+          <li key={k} className="flex items-center gap-2">
+            <span className="rounded-[3px] border border-line2 border-b-2 bg-bg0 px-1.5 py-0.5 text-[9px] text-amb">{k}</span>
+            <span className="text-dim">{v}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

@@ -309,6 +309,32 @@ export function Monitor({ scanning = false }: { scanning?: boolean }) {
               })}
           </div>
 
+          {/* sıcaklık / tint — manuel beyaz dengesi katmanı */}
+          {f.temp !== 0 && (
+            <div
+              className="pointer-events-none absolute inset-0 z-[5]"
+              style={{
+                mixBlendMode: "soft-light",
+                background:
+                  f.temp > 0
+                    ? `rgba(255,147,41,${(f.temp / 100) * 0.65})`
+                    : `rgba(56,130,255,${(-f.temp / 100) * 0.65})`,
+              }}
+            />
+          )}
+          {f.tint !== 0 && (
+            <div
+              className="pointer-events-none absolute inset-0 z-[5]"
+              style={{
+                mixBlendMode: "soft-light",
+                background:
+                  f.tint > 0
+                    ? `rgba(255,72,196,${(f.tint / 100) * 0.55})`
+                    : `rgba(64,201,120,${(-f.tint / 100) * 0.55})`,
+              }}
+            />
+          )}
+
           {safe && (
             <>
               <div className="pointer-events-none absolute inset-[5%] z-[5] border border-dashed border-scope/40" />

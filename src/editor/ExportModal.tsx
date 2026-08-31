@@ -152,6 +152,23 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
       ctx.restore();
     };
 
+    const gradeOverlay = () => {
+      const t = state.filters.temp;
+      const ti = state.filters.tint;
+      if (!t && !ti) return;
+      ctx.save();
+      ctx.globalCompositeOperation = "soft-light";
+      if (t) {
+        ctx.fillStyle = t > 0 ? `rgba(255,147,41,${(t / 100) * 0.65})` : `rgba(56,130,255,${(-t / 100) * 0.65})`;
+        ctx.fillRect(0, 0, W, H);
+      }
+      if (ti) {
+        ctx.fillStyle = ti > 0 ? `rgba(255,72,196,${(ti / 100) * 0.55})` : `rgba(64,201,120,${(-ti / 100) * 0.55})`;
+        ctx.fillRect(0, 0, W, H);
+      }
+      ctx.restore();
+    };
+
     const drawCaption = (t: number) => {
       const cap = state.captions.find((c) => t >= c.start && t < c.end);
       if (!cap || !cap.text.trim()) return;
@@ -271,6 +288,7 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
         const tick = () => {
           if (cancelRef.current) return resolve();
           drawFn();
+          gradeOverlay();
           const t = elapsed();
           drawCaption(t);
           drawLayers(t);
@@ -288,6 +306,7 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
       if (media.kind === "video") {
         const el = exportEls[media.id];
         if (el.readyState < 1) await waitEvent(el, "loadeddata", 4000);
+        el.playbackRate = clip.speed ?? 1;
         el.currentTime = clip.in;
         await waitEvent(el, "seeked", 2000);
         void el.play().catch(() => {});

@@ -30,6 +30,7 @@ export interface Clip {
   scale?: number; // % (100 = normal)
   tx?: number; // % yatay kaydırma (-50..50)
   ty?: number; // % dikey kaydırma
+  speed?: number; // oynatma hızı (yoksa 1)
 }
 
 export interface FrameSpec {
@@ -105,10 +106,22 @@ export interface Filters {
   contrast: number;
   saturate: number;
   hue: number;
+  temp: number; // -100..100 (mavi ↔ turuncu)
+  tint: number; // -100..100 (yeşil ↔ magenta)
   rotate: number; // 0/90/180/270
   flipH: boolean;
   flipV: boolean;
 }
+
+/* renk paletleri — manuel düzeleme + AI komutları ortak kullanır */
+export const PRESETS: Record<string, { label: string; f: Partial<Filters> }> = {
+  sinematik: { label: "Sinematik", f: { contrast: 118, saturate: 112, brightness: 97, hue: -6, temp: 12 } },
+  sicak: { label: "Sıcak", f: { brightness: 105, contrast: 106, saturate: 122, hue: -10, temp: 34 } },
+  soguk: { label: "Soğuk", f: { contrast: 104, saturate: 90, hue: 16, temp: -30 } },
+  canli: { label: "Canlı", f: { saturate: 145, contrast: 112, brightness: 104 } },
+  siyahbeyaz: { label: "Mono", f: { saturate: 0, contrast: 112 } },
+  vintage: { label: "Vintage", f: { saturate: 80, contrast: 96, brightness: 105, hue: -14, temp: 22 } },
+};
 
 /* ------------------------------------------------------------------ */
 /* video efektleri (VFX)                                               */
@@ -143,6 +156,8 @@ export const DEFAULT_FILTERS: Filters = {
   contrast: 100,
   saturate: 100,
   hue: 0,
+  temp: 0,
+  tint: 0,
   rotate: 0,
   flipH: false,
   flipV: false,
@@ -161,7 +176,7 @@ export function clamp(v: number, min: number, max: number): number {
   return Math.min(Math.max(v, min), max);
 }
 
-export const clipDur = (c: Clip): number => c.out - c.in;
+export const clipDur = (c: Clip): number => (c.out - c.in) / (c.speed ?? 1);
 
 export const seqDuration = (clips: Clip[]): number =>
   clips.reduce((a, c) => a + clipDur(c), 0);
