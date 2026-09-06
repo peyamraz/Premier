@@ -1,2 +1,2 @@
 # Premier
-Premiere Pro Premium Download
+Premiere Pro 
