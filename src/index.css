@@ -1,0 +1,244 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Bebas Neue", "Oswald", "Arial Narrow", sans-serif;
+  --font-sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace;
+
+  --color-bg0: #0b0e13;
+  --color-bg1: #0f131a;
+  --color-panel: #131822;
+  --color-panel2: #182029;
+  --color-line: #212a38;
+  --color-line2: #2f3a4d;
+  --color-ink: #eae5d9;
+  --color-mut: #8c95a8;
+  --color-dim: #5d6779;
+  --color-amb: #ffb43c;
+  --color-amb2: #e89b22;
+  --color-rec: #ff5449;
+  --color-scope: #3bd6b0;
+  --color-cue: #6fb1ff;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--color-bg0);
+  color: var(--color-ink);
+  background-image:
+    linear-gradient(rgba(255, 180, 60, 0.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 180, 60, 0.022) 1px, transparent 1px);
+  background-size: 56px 56px;
+}
+
+::selection {
+  background: rgba(255, 180, 60, 0.85);
+  color: #141313;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-amb);
+  outline-offset: 2px;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2a3444 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #2a3444;
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------- monitor efektleri ---------- */
+.scanlines::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 6;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.028) 0 1px,
+    transparent 1px 3px
+  );
+}
+.vignette::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+  background: radial-gradient(
+    120% 90% at 50% 40%,
+    transparent 55%,
+    rgba(0, 0, 0, 0.5)
+  );
+}
+
+/* ---------- blink / pulse ---------- */
+.blink {
+  animation: blink 1.15s steps(2, start) infinite;
+}
+@keyframes blink {
+  to {
+    visibility: hidden;
+  }
+}
+.pulse-dot {
+  animation: pulseDot 2s ease-in-out infinite;
+}
+@keyframes pulseDot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* ---------- yürüyen karınca çerçeve ---------- */
+.ants-frame {
+  background-image:
+    repeating-linear-gradient(90deg, var(--color-amb) 0 10px, transparent 10px 22px),
+    repeating-linear-gradient(90deg, var(--color-amb) 0 10px, transparent 10px 22px),
+    repeating-linear-gradient(0deg, var(--color-amb) 0 10px, transparent 10px 22px),
+    repeating-linear-gradient(0deg, var(--color-amb) 0 10px, transparent 10px 22px);
+  background-size:
+    100% 1.5px,
+    100% 1.5px,
+    1.5px 100%,
+    1.5px 100%;
+  background-position:
+    0 0,
+    0 100%,
+    0 0,
+    100% 0;
+  background-repeat: no-repeat;
+  animation: ants 1.5s linear infinite;
+}
+@keyframes ants {
+  to {
+    background-position:
+      22px 0,
+      -22px 100%,
+      0 -22px,
+      100% 22px;
+  }
+}
+
+/* ---------- AI tarama süpürmesi ---------- */
+.scan-sweep {
+  animation: scanSweep 1.15s cubic-bezier(0.4, 0, 0.6, 1) infinite alternate;
+}
+@keyframes scanSweep {
+  from {
+    left: -8%;
+  }
+  to {
+    left: 100%;
+  }
+}
+
+/* ---------- toast ---------- */
+.toast-in {
+  animation: toastIn 0.25s cubic-bezier(0.16, 0.84, 0.3, 1);
+}
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---------- amber aralık kaydırıcı ---------- */
+input.range-amber {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 18px;
+  background: transparent;
+  cursor: pointer;
+}
+input.range-amber::-webkit-slider-runnable-track {
+  height: 3px;
+  background: var(--color-line2);
+  border-radius: 2px;
+}
+input.range-amber::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 11px;
+  height: 11px;
+  margin-top: -4px;
+  background: var(--color-amb);
+  border: 2px solid #0b0e13;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px var(--color-amb2);
+  transition: transform 0.1s;
+}
+input.range-amber::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+input.range-amber::-moz-range-track {
+  height: 3px;
+  background: var(--color-line2);
+  border-radius: 2px;
+}
+input.range-amber::-moz-range-thumb {
+  width: 9px;
+  height: 9px;
+  background: var(--color-amb);
+  border: 2px solid #0b0e13;
+  border-radius: 2px;
+}
+
+/* ---------- video efektleri ---------- */
+.vfx-flicker {
+  animation: vfxFlicker 0.9s steps(6, end) infinite;
+  opacity: 0;
+}
+@keyframes vfxFlicker {
+  0%, 100% { opacity: 0; }
+  12% { opacity: 0.16; }
+  24% { opacity: 0.02; }
+  38% { opacity: 0.22; }
+  52% { opacity: 0.05; }
+  70% { opacity: 0.18; }
+  86% { opacity: 0.03; }
+}
+.vhs-track {
+  animation: vhsTrack 3.4s linear infinite;
+  top: -15%;
+}
+@keyframes vhsTrack {
+  from { transform: translateY(0); }
+  to { transform: translateY(1200%); }
+}
+
+/* ---------- azaltılmış hareket ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .ants-frame {
+    animation: none;
+  }
+}
